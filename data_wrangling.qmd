@@ -1,0 +1,124 @@
+---
+title: "Data Wrangling"
+subtitle: Feb. 24, 2026, Georgia Vasey
+format: pdf
+gfm: default
+pdf: default
+execute:
+  warning: false
+---
+
+## Data Wrangling
+
+I have multiple raw datasets that I would eventually like to merge into one or two dataframes to complete my analyses on.
+
+## 1 - Soil Carbon
+
+First, I need to read in the libraries to help with data wrangling.
+
+```{r warning=FALSE}
+## Load packages from library to help with data wrangling
+library("tidyverse")
+library(here)
+```
+
+Now, I'm bringing in the raw soil carbon dataset from Brookside Labs, OH. I want to remove the top seven rows, which is the metadata from Brookside Labs. I need to mutate the column names so that the rest of the raw datasets can match.
+
+```{r}
+# Import the data frames for soil carbon
+# I collected data in 2023 and 2024 before and after the burns
+soil_C_N_2024 <- read_csv(here("data", "soil_C_N_2024.csv"),
+                          skip = 7) # Removes top 7 rows with metadata
+soil_C_N_2023 <- read_csv(here("data", "soil_C_N_2023.csv"),
+                          skip = 7) # Removes top 7 rows with metadata
+
+# Take a look at the data in the first six rows to make sure it looks correct
+print(soil_C_N_2023)
+```
+
+Now, I want to manipulate the dataframe
+
+```{r}
+# See column names for 2024 burns
+colnames(soil_C_N_2024)
+
+# Create clean dataframe for soil carbon in 2024 that only includes Carbon
+soil_C_2024 <- soil_C_N_2024 %>%
+  # Remove everything except for %C
+  select(-2, -3, -5, -6) %>%
+  # Need to standardize syntax of Sample Location before separating into new columns
+  #Create a standardized version of Sample Location so everything uses "_"
+  mutate(Sample_Location_std = str_replace_all(`Sample Location`, "-", "_")
+  ) %>% 
+  # Also need to rename CSR, to remove CSR_SC (I didn't end up sampling at two different sites within CSR)
+    mutate(
+  `Sample Location` = if_else(
+    #The condition: If a Sample Location starts with CSR_SC_
+    str_starts(`Sample Location`, "CSR_SC_"), #value_if_true
+    # If FALSE, replace with the value_if_true (CSR_SC_) with value_if_false (CSR_)
+    str_replace(`Sample Location`, "^CSR_SC_", "CSR_"),
+    # If string does not include CSR_SC, return original value unchanged
+    `Sample Location`
+  )
+) %>% 
+  # Separate 'Sample Location' into individual columnns
+  separate(col = 'Sample Location',
+           into = c("Site", "Treatment", "Transect_ID", "Sample", "Time"),
+           sep = "_") %>% 
+    mutate(Treatment = recode(Treatment, "B" = "Burn", "C" = "Control"),
+           Time = recode(Time, "pre" = "Pre-burn","post" = "Post-burn"),
+           Sample = as.numeric(Sample),
+           'Carbon (%)' = as.numeric(`Carbon   (%)`)) %>% 
+  # Get rid of the Carbon column that is character
+  select(-6)
+
+# Create clean dataframe for soil carbon in 2023 that only includes Carbon
+soil_C_2023 <- soil_C_N_2023 %>%
+  # Only include %C
+  select(-1, -7, -8, -10, -11) %>% 
+  mutate('Carbon (%)' = as.numeric(`Carbon   (%)`)) %>% 
+  # Get rid of the Carbon column that is character
+  select(-6)
+
+```
+
+Now it's time to merge 2023 and 2024 burns with bulk density, so that I can calculate soil C Mg ha.
+
+```{r}
+# Merge soil_C_2023 and soil_C_2024
+soil_C <- bind_rows(soil_C_2023, soil_C_2024)
+
+# Import bulk density data frame
+bulk_density <- read_csv(here("data", "bulk_density.csv"))
+
+# Only keep bulk density
+bulk_density_red <- bulk_density %>% 
+  # Keep only Site, Treatment, Name, Bulk Density
+  select(3, 4, 5, 12) %>% 
+  # Rename bulk density
+  rename(bulk_density = `Correct bulk density`) %>%
+  # Correct Site names for Wilder Ranch to not include underscore
+  mutate(
+    Site = str_replace_all(Site, "_", "")
+  ) %>% 
+  # Add a column called Transect_ID
+  mutate(
+    Transect_ID = str_extract(Name, "T[1-5]")
+  ) %>% 
+  #Relocate column Transect_ID
+  relocate(Transect_ID, .after = Name)
+
+# Join bulk density into the dataframe
+# Also removed MC (Molino Creek), since I didn't send in samples
+soil_C_bulk <- soil_C %>%
+  left_join(
+    bulk_density_red,
+    by = c("Site", "Treatment", "Transect_ID")
+  ) %>% 
+  # Removes Name
+  select(-7) 
+
+#Calculate a new column for soil carbon per hectare 
+soil_C_bulk <- soil_C_bulk %>% 
+  mutate(C_Mg_per_ha = `Carbon (%)`*bulk_density*10 )
+```
