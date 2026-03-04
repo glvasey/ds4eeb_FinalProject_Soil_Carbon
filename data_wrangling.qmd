@@ -1,6 +1,6 @@
 ---
 title: "Data Wrangling"
-subtitle: Feb. 24, 2026, Georgia Vasey
+subtitle: Winter Quarter 2026, Georgia Vasey
 format: pdf
 gfm: default
 pdf: default
@@ -8,9 +8,11 @@ execute:
   warning: false
 ---
 
-## Data Wrangling
+## ⍟ Data Wrangling
 
 I have multiple raw datasets that I would eventually like to merge into one or two dataframes to complete my analyses on.
+
+## [Response Variables]{.underline}
 
 ## 1 - Soil Carbon
 
@@ -31,47 +33,78 @@ soil_C_N_2024 <- read_csv(here("data", "soil_C_N_2024.csv"),
                           skip = 7) # Removes top 7 rows with metadata
 soil_C_N_2023 <- read_csv(here("data", "soil_C_N_2023.csv"),
                           skip = 7) # Removes top 7 rows with metadata
-
-# Take a look at the data in the first six rows to make sure it looks correct
-print(soil_C_N_2023)
 ```
 
 Now, I want to manipulate the dataframe
 
 ```{r}
-# See column names for 2024 burns
-colnames(soil_C_N_2024)
-
+# 2024 Burns
 # Create clean dataframe for soil carbon in 2024 that only includes Carbon
 soil_C_2024 <- soil_C_N_2024 %>%
   # Remove everything except for %C
   select(-2, -3, -5, -6) %>%
-  # Need to standardize syntax of Sample Location before separating into new columns
-  #Create a standardized version of Sample Location so everything uses "_"
+  # Convert any hyphens to underscores (safe even if there are none)
+  ##Create a standardized version of Sample Location so everything uses "_"
   mutate(Sample_Location_std = str_replace_all(`Sample Location`, "-", "_")
   ) %>% 
   # Also need to rename CSR, to remove CSR_SC (I didn't end up sampling at two different sites within CSR)
     mutate(
-  `Sample Location` = if_else(
+  Sample_Location_std = if_else(
     #The condition: If a Sample Location starts with CSR_SC_
-    str_starts(`Sample Location`, "CSR_SC_"), #value_if_true
+    str_starts(Sample_Location_std, "CSR_SC_"), #value_if_true
     # If FALSE, replace with the value_if_true (CSR_SC_) with value_if_false (CSR_)
-    str_replace(`Sample Location`, "^CSR_SC_", "CSR_"),
+    str_replace(Sample_Location_std, "^CSR_SC_", "CSR_"),
     # If string does not include CSR_SC, return original value unchanged
-    `Sample Location`
-  )
-) %>% 
-  # Separate 'Sample Location' into individual columnns
-  separate(col = 'Sample Location',
-           into = c("Site", "Treatment", "Transect_ID", "Sample", "Time"),
-           sep = "_") %>% 
-    mutate(Treatment = recode(Treatment, "B" = "Burn", "C" = "Control"),
-           Time = recode(Time, "pre" = "Pre-burn","post" = "Post-burn"),
-           Sample = as.numeric(Sample),
-           'Carbon (%)' = as.numeric(`Carbon   (%)`)) %>% 
-  # Get rid of the Carbon column that is character
-  select(-6)
+    Sample_Location_std
+  ),
+  # Make sure every row ends with a time token (_pre or _post).
+     Sample_Location_std = if_else(
+       #If it already ends in _pre or _post, keep it.
+      str_detect(Sample_Location_std, "_(pre|post)$"),
+      Sample_Location_std,
+       #Otherwise, for all controls like PL_C_T1_15, append _pre.
+      paste0(Sample_Location_std, "_pre")
+    )
+  ) %>%
+  # Separate the standardized 'Sample Location' into individual columnns
+  separate(
+    col = Sample_Location_std,
+    into = c("Site", "Treatment", "Transect", "Sample", "Time"),
+    sep = "_",
+    extra = "merge",
+    fill = "right"
+  ) %>%
+  #Recode + convert to numeric
+  mutate(
+    Treatment = recode(Treatment, "B" = "Burn", "C" = "Control"),
+    Time      = recode(Time, "pre" = "Pre-burn", "post" = "Post-burn"),
+    Sample    = parse_number(Sample),
+    `Carbon (%)` = parse_number(`Carbon   (%)`)
+  ) %>%
+  # 5) Drop the original carbon column + optional keep original Sample Location if you want
+  select(Site, Treatment, Transect, Sample, Time, `Carbon (%)`, `Sample Location`)
 
+# Create Transect_ID
+soil_C_2024 <- soil_C_2024 %>%
+  mutate(
+    Transect_ID = paste0(
+      Site, "_",
+      recode(Treatment, "Burn" = "B", "Control" = "C"), "_",
+      Transect
+    )
+  )
+
+# Getting rid of the two columns with NA
+soil_C_2024 <- soil_C_2024 %>%
+  filter(
+    !is.na(Site),
+    !is.na(Treatment),
+    !is.na(Transect),
+    !is.na(Sample),
+    !is.na(Time)
+  )
+
+# 2023 Burns
 # Create clean dataframe for soil carbon in 2023 that only includes Carbon
 soil_C_2023 <- soil_C_N_2023 %>%
   # Only include %C
@@ -80,9 +113,22 @@ soil_C_2023 <- soil_C_N_2023 %>%
   # Get rid of the Carbon column that is character
   select(-6)
 
+# Make consistent with soil_C_2024
+soil_C_2023 <- soil_C_2023 %>%
+  rename(Transect = Transect_ID)
+
+# Create Transect_ID for 2023 Burns
+soil_C_2023 <- soil_C_2023 %>%
+  mutate(
+    Transect_ID = paste0(
+      Site, "_",
+      recode(Treatment, "Burn" = "B", "Control" = "C"), "_",
+      Transect
+    )
+  )
 ```
 
-Now it's time to merge 2023 and 2024 burns with bulk density, so that I can calculate soil C Mg ha.
+Now it's time to merge 2023 and 2024 burns with bulk density, so that I can calculate soil C Mg ha. The bulk density is required to calculate soil organic carbon stocks in Megagrams of carbon per hectare. Bulk density is the dry weight of a known volume of soil, which is multiplied by the % total carbon. For my soil samples, the volume for 2023 burns was 15 cm depth, whereas the 2024 burns was s 5 cm depth. This is adjusted for in the bulk density calculation.
 
 ```{r}
 # Merge soil_C_2023 and soil_C_2024
@@ -103,22 +149,1163 @@ bulk_density_red <- bulk_density %>%
   ) %>% 
   # Add a column called Transect_ID
   mutate(
-    Transect_ID = str_extract(Name, "T[1-5]")
+    Transect = str_extract(Name, "T[1-5]")
   ) %>% 
   #Relocate column Transect_ID
-  relocate(Transect_ID, .after = Name)
+  relocate(Transect, .after = Name)
+
+# Create Transect_ID for reduced bulk density
+bulk_density_red <- bulk_density_red %>%
+  mutate(
+    Transect_ID = paste0(
+      Site, "_",
+      recode(Treatment, "Burn" = "B", "Control" = "C"), "_",
+      Transect
+    )
+  )
 
 # Join bulk density into the dataframe
 # Also removed MC (Molino Creek), since I didn't send in samples
 soil_C_bulk <- soil_C %>%
   left_join(
     bulk_density_red,
-    by = c("Site", "Treatment", "Transect_ID")
+    by = c("Site", "Treatment", "Transect", "Transect_ID")
   ) %>% 
-  # Removes Name
-  select(-7) 
+  # Remove Sample Location
+  select(-8) 
 
-#Calculate a new column for soil carbon per hectare 
+#Calculate a new column for soil carbon (Megagrams) per hectare 
 soil_C_bulk <- soil_C_bulk %>% 
   mutate(C_Mg_per_ha = `Carbon (%)`*bulk_density*10 )
+```
+
+Now I want to create another table that evaluates the change in soil C. I want this for both the % total carbon and soil C (Mg) per hectare. I'm taking the difference of Post-burn and Pre-burn.
+
+```{r}
+soil_C_change <- soil_C_bulk %>%
+  # Select columns to calculate the change in soil C
+  select(Site, Treatment, Transect, Transect_ID, Sample, Time, Name, `Carbon (%)`, C_Mg_per_ha) %>%
+  # Make one row per Site-Treatment-Transect-Sample, with separate columns for Pre vs Post
+  pivot_wider(
+    names_from  = Time,
+    values_from = c(`Carbon (%)`, C_Mg_per_ha),
+    names_sep   = "_"
+  ) %>%
+  # Compute change as (Post - Pre)  
+  mutate(
+    # New columns for % C change
+    final_Carbon_pct  = `Carbon (%)_Post-burn` - `Carbon (%)_Pre-burn`,
+    # New column for soil C (Mg) per ha change
+    final_C_Mg_per_ha = `C_Mg_per_ha_Post-burn` - `C_Mg_per_ha_Pre-burn`
+  ) %>% 
+# Remove Sample Location
+  select(-6) %>% 
+# Remove all Site = MC  
+  dplyr::filter(!is.na(Site), Site != "MC")
+```
+
+## 2 - Root Biomass
+
+I'm bringing in the raw dataset for root biomass. I only measured root biomass post-burn for the 2024 burns in both the burn and control. I want to evaluate whether there is an increase in root growth post-fire.
+
+The volume of each soil core (5 cm diameter, 15 cm length) was 294.52 cm\^3 ; V = π r2 h or V = π (2.5 x 2.5)(15). Root biomass per unit of ground area (g/m\^2) from V = A d or V = (100 cm)(100cm)(15 cm) = 150,000 cm\^3. Thus, each core sample represents 294.52 cm\^3 of 150,000 cm\^3. To convert dry roots to g/m\^2, I multiplied dry weight (g) by the inverse of the fraction (150,000/294.52) to get the root biomass of each sample (Roots_g_per_m2).
+
+```{r}
+#Read in data
+roots <- read_csv(here("data", "root_biomass.csv"))
+```
+
+## 3 - Aboveground Biomass
+
+I'm bringing in the raw dataset for aboveground biomass, also called residual dry matter (RDM). I collected RDM pre-burn in 2023 and 2024. I then collected RDM one year later for 2024 burns and 2 years later for 2023 burns in the fall. Unfortunately, I forgot to sample at the 10- , 20-, 30-, and 40-m for the 2023 burns, so I had to remove this data. Now I want to estimate the change in aboveground biomass (2024) for the burn versus control sites.
+
+```{r}
+#Read in data
+aboveground_measurements <- read_csv(here("data", "rdm_fireintensity_soilmoisture.csv"))
+
+head(aboveground_measurements)
+
+#Create a new dataframe for RDM change only 
+RDM_change <- aboveground_measurements %>%
+  # Select columns to calculate the change in RDM
+  select(Site, Treatment, Transect, Transect_ID, Sample, RDM_g_preburn, RDM_g_postburn) %>%
+  # Compute change as (Post - Pre)  
+  mutate(
+    # New columns for the change in RDM (final_RDM)
+    final_RDM  = RDM_g_postburn - RDM_g_preburn)
+```
+
+## [Predictor Variables]{.underline}
+
+## 1 - Weather
+
+I found the burn date for each site from the CAL FIRE FRAP (Fire and Resource Assessment Program) database. I then obtained local weather station data:
+
+-   RAWS for CSR (Pulgas California; 37.475, -122.298056), CF (Coast Dairies California; 37.030833, -122.187778), and AM (Big Sur California; 36.235556, -121.785)
+
+<!-- -->
+
+-   CIMIS for WR22, WR13, WR5, and MF (De Laveagea (104); 36.997444, -121.99676), PL (Pacific Grove (193); 36.63322, -121.93486), and TKR (Pescadero (253); 37.255333, -122.3708)
+
+I have weather data for the day of the burn, number of days since rainfall event ≥ 7 mm (antecedent precip), the 5-day average for weather variables including the burn date during the week leading up to the burn, and finally the 5-year average for all weather variables.
+
+print(weather_final)
+
+```{r}
+# Load libraries to deal with excel spreadsheet
+library(readxl)
+library(dplyr)
+library(lubridate)
+library(stringr)
+
+#Read in data
+file_path <- here::here("data", "Weather.xlsx")
+ # Need a string for later, not a data frame
+
+# Create Burn Date (Site and Day of Burn)
+ # Burn Date was obtained through CAL FIRE FRAP Database
+burn_dates <- tibble::tribble(
+  ~Site,  ~Date,
+  "CSR",  "10/11/2024",
+  "TKR",  "10/25/2024",
+  "CF",   "11/01/2023",
+  "WR5",  "11/13/2024",
+  "MF",   "11/20/2024",
+  "WR22", "11/09/2023",
+  "WR13", "11/13/2024",
+  "PL",   "11/19/2024",
+  "AM",   "12/13/2023"
+) %>%
+  mutate(
+    Date = mdy(Date),
+    Year = year(Date)
+  )
+
+# Obtain weather data from the Site_daily sheets
+ # WR_23_daily is WR22
+ # WR_MF_24_daily is WR5, MF, WR13
+site_sheet_map <- tibble::tribble(
+  ~Site,  ~daily_sheet,
+  "CSR",  "CSR_daily",
+  "TKR",  "TKR_daily",
+  "CF",   "CF_daily",
+  "WR5",  "WR_MF_24_daily",
+  "MF",   "WR_MF_24_daily",
+  "WR13", "WR_MF_24_daily",
+  "WR22", "WR_23_daily",
+  "PL",   "PL_daily",
+  "AM",   "AM_daily"
+)
+
+# Develop a function: read a daily sheet safely
+read_daily_sheet <- function(sheet_name) {
+  readxl::read_excel(file_path, sheet = sheet_name) %>%
+    # standardize column names a bit (optional)
+    rename_with(~ str_replace_all(.x, "\\s+", "_"))
+}
+
+# Develop a function: pull burn-day row for one site
+get_burn_day_values <- function(site, burn_date, sheet_name) {
+
+  daily <- read_daily_sheet(sheet_name) %>%
+    mutate(date = as.Date(date))  # ensure Date class
+
+  # Columns needed from each daily sheet (plus date for filtering)
+  keep_cols <- c(
+    "date", "Jul", "wind_speed",
+    "mean_temp", "max_temp", "min_temp",
+    "mean_humidity", "max_humidity", "min_humidity",
+    "precipitation"
+  )
+
+  # Some sheets include extra columns (e.g., stn_id, year, Unnamed:*).
+  # We only select what we need IF they exist.
+  burn_row <- daily %>%
+    filter(date == burn_date) %>% # Burn Date
+    select(any_of(keep_cols)) # Selected weather data
+
+  # If missing, return an NA row with the expected columns to prevent bind_rows errors
+  if (nrow(burn_row) == 0) {
+    burn_row <- tibble(
+      date = burn_date,
+      Jul = NA_real_,
+      wind_speed = NA_real_,
+      mean_temp = NA_real_,
+      max_temp = NA_real_,
+      min_temp = NA_real_,
+      mean_humidity = NA_real_,
+      max_humidity = NA_real_,
+      min_humidity = NA_real_,
+      precipitation = NA_real_
+    )
+  }
+
+  burn_row %>%
+    mutate(Site = site) %>%
+    select(Site, everything())
+}
+
+# Function for antecedent precipitation and days since last precipitation event
+  # days_since_precip = days between burn date and most recent prior date with precip>=7
+ # antec_precip      = that precipitation amount
+get_antec_precip <- function(site, burn_date, sheet_name, threshold = 7) {
+
+  daily <- read_daily_sheet(sheet_name) %>% #Get the daily sheet
+    mutate(date = as.Date(date)) #Make sure that Date is taken from date
+  # Look for the prior rain event 
+  prior_event <- daily %>%
+    filter(date < burn_date) %>%
+    # Threshold is >= to 7 mm precipitation event
+    filter(!is.na(precipitation) & precipitation >= threshold) %>% 
+    arrange(desc(date)) %>%
+    slice(1)
+  # Deal with if there is no prior rain event 
+  if (nrow(prior_event) == 0) {
+    return(tibble(
+      Site = site,
+      days_since_precip = NA_integer_,
+      antec_precip = NA_real_
+    ))
+  }
+
+  tibble(
+    Site = site,
+    # Gives number of days since burn date with precipitation >= 7 mm
+    days_since_precip = as.integer(burn_date - prior_event$date), 
+    # Records the value of the event >= 7mm
+    antec_precip = as.numeric(prior_event$precipitation)
+  )
+}
+
+# Finally build the burn-day daily-weather table (Jul -> precipitation)
+burn_day_weather <- burn_dates %>% #Original data frame with Site and Burn Date
+  # Left two columns are Site and Date for burn date
+  left_join(site_sheet_map, by = "Site") %>%
+  rowwise() %>%
+  do({
+    site <- .$Site #Site
+    burn_date <- .$Date #Burn Date
+    sheet_name <- .$daily_sheet #Values from Site_daily sheets
+
+    out <- get_burn_day_values(site, burn_date, sheet_name)
+    # "date", "Jul", "wind_speed", "mean_temp", "max_temp", "min_temp", "mean_humidity", "max_humidity", "min_humidity","precipitation"
+    out
+  }) %>%
+  ungroup() %>%
+  rename(Date = date)  # burn date column name as requested
+
+# Now add days_since_precip + antec_precip to original data frame (burn dates)
+ # Will eventually merge all of the tables 
+antec_tbl <- burn_dates %>% #Again, the Site and Burn Date data frame
+  left_join(site_sheet_map, by = "Site") %>% #Join by Site
+  rowwise() %>%
+  do({
+    get_antec_precip(.$Site, .$Date, .$daily_sheet, threshold = 7)
+  }) %>%
+  ungroup()
+
+# Last rows to be added are the 5-day means from weather_5_days (cols 3:9)
+ # Filters each site to the 5-day window ending on burn date
+ # More accurate representation of the weather leading up to the burn date
+weather_5_days <- readxl::read_excel(file_path, sheet = "weather_5_days") %>%
+  mutate(date = as.Date(date)) # Get the sheet and look for the burn date
+#Create the 5 day weather summary table
+five_day_summary <- burn_dates %>% #Again, to merge with original Site and Burn Date table
+  rowwise() %>%
+  do({
+    site <- .$Site
+    burn_date <- .$Date
+
+    w <- weather_5_days %>% # w is which days to pull weather data from 
+      filter(Site == site) %>%
+      # Look at the Burn Date and the 4 prior days (5 day average)
+      filter(date >= (burn_date - days(4)) & date <= burn_date)
+
+    # If fewer than 1 row exists, return NA columns
+    if (nrow(w) == 0) {
+      return(tibble(
+        Site = site,
+        `5d_mean_temp` = NA_real_,
+        `5d_max_temp` = NA_real_,
+        `5d_min_temp` = NA_real_,
+        `5d_mean_humidity` = NA_real_,
+        `5d_max_humidity` = NA_real_,
+        `5d_min_humidity` = NA_real_,
+        `5d_precipitation` = NA_real_
+      ))
+    }
+
+    # Columns 3:9 are:
+    # mean_temp_5, max_temp_5, min_temp_5, mean_humidity_5, max_humidity_5, min_humidity_5, precipitation_5
+    s <- w %>%
+      # Take the mean of the 5 values from each of these columns
+      summarise(
+        mean_temp_5 = mean(mean_temp_5, na.rm = TRUE),
+        max_temp_5 = mean(max_temp_5, na.rm = TRUE),
+        min_temp_5 = mean(min_temp_5, na.rm = TRUE),
+        mean_humidity_5 = mean(mean_humidity_5, na.rm = TRUE),
+        max_humidity_5 = mean(max_humidity_5, na.rm = TRUE),
+        min_humidity_5 = mean(min_humidity_5, na.rm = TRUE),
+        precipitation_5 = mean(precipitation_5, na.rm = TRUE)
+      ) %>%
+      # Rename them, since I will also create 5 year averages in weather eventually
+      rename(
+        `5d_mean_temp` = mean_temp_5,
+        `5d_max_temp` = max_temp_5,
+        `5d_min_temp` = min_temp_5,
+        `5d_mean_humidity` = mean_humidity_5,
+        `5d_max_humidity` = max_humidity_5,
+        `5d_min_humidity` = min_humidity_5,
+        `5d_precipitation` = precipitation_5
+      ) %>%
+      mutate(Site = site)
+
+    s #Return the values
+  }) %>%
+  ungroup()
+
+#### Final table that combines original data frame, burn date weather, antecedent precip, and 5 day weather averages ####
+weather <- burn_dates %>%
+  select(Site, Date, Year) %>% #Select all three columns from burn_dates
+  # Join with burn day weather
+  left_join(burn_day_weather, by = c("Site", "Date")) %>%
+  # Join with antecedent precip table
+  left_join(antec_tbl, by = "Site") %>%
+  # Join with 5 day average for weather
+  left_join(five_day_summary, by = "Site") %>%
+  # Make sure all of the columns exist
+  select(
+    Site, Date, Year, Jul,
+    wind_speed,
+    mean_temp, max_temp, min_temp,
+    mean_humidity, max_humidity, min_humidity,
+    precipitation,
+    days_since_precip, antec_precip,
+    `5d_mean_temp`, `5d_max_temp`, `5d_min_temp`,
+    `5d_mean_humidity`, `5d_max_humidity`, `5d_min_humidity`,
+    `5d_precipitation`
+  )
+
+# Lastly, I need to obtain the 5-year monthly weather average, and add it to the weather data frame
+
+# Read in data
+file_5y <- here::here("data", "10_5_Weather.xlsx")
+
+# Need to specify the values from the columns that I want to average
+vars_5y <- c(
+  "mean_temp", "max_temp", "min_temp",
+  "mean_humidity", "max_humidity", "min_humidity",
+  "precipitation"
+)
+
+# Develop a function that reads the sheet, and computes means of the selected columns
+ # This also ignores all other columns that are not from vars_5y
+compute_5y_means <- function(sheet_name) {
+  df <- readxl::read_excel(file_5y, sheet = sheet_name) %>%
+    rename_with(~ stringr::str_replace_all(.x, "\\s+", "_"))
+
+  # Compute means for the target variables
+  out <- df %>%
+    summarise(across(
+      any_of(vars_5y),
+      ~ mean(as.numeric(.x), na.rm = TRUE)
+    ))
+
+  # Rename to 5y_* format
+  out %>%
+    # Rename the variables with 5y_ in front to not confuse with 5d_ (5 days)
+    rename_with(~ paste0("5y_", .x), .cols = everything()) %>%
+    mutate(source_sheet = sheet_name) %>%
+    select(source_sheet, everything())
+}
+
+# Compute 5-year means for each source sheet 
+means_pulgas   <- compute_5y_means("Pulgas_5")      # CSR
+means_ccd      <- compute_5y_means("CCD_3")         # CF
+ # Note, that CCD only went back 3 years 
+means_bigsur   <- compute_5y_means("Big Sur_5")     # AM
+means_pesc     <- compute_5y_means("Pescadero_5")   # TKR
+means_dela     <- compute_5y_means("DeLa_5")        # WR22, WR13, WR5, MF
+means_pacgrove <- compute_5y_means("PacGrove_5")    # PL
+
+#Making sure to specify which sites are associated with the 5y source sheets
+five_year_by_site <- bind_rows(
+  means_pulgas   %>% mutate(Site = "CSR"),
+  means_ccd      %>% mutate(Site = "CF"),
+  means_bigsur   %>% mutate(Site = "AM"),
+  means_pesc     %>% mutate(Site = "TKR"),
+  means_pacgrove %>% mutate(Site = "PL"),
+
+  # DeLa_5 applies to multiple sites:
+  means_dela %>% mutate(Site = "WR22"),
+  means_dela %>% mutate(Site = "WR13"),
+  means_dela %>% mutate(Site = "WR5"),
+  means_dela %>% mutate(Site = "MF")
+) %>%
+  select(
+    Site,
+    starts_with("5y_")
+  )
+
+#### Final, final weather table that includes 5-year normals for weather ####
+weather_final <- weather %>%
+  left_join(five_year_by_site, by = "Site")
+
+# Double check that it merged corectly for all 9 sites
+print(weather_final %>% select(Site, starts_with("5y_")) %>% distinct())
+
+##Note - there is no Transect_ID for this predictor variable
+ # Additionally, there is no Treatment 
+```
+
+## 2 - Topography
+
+I created polygons around each burn and control prairie in ArcGIS Pro. I then downloaded topography raster (DEM) from The National Map (3DEP) with 10m resolution (10 m x 10 m = 100 m2 on the ground): <https://index.nationalmap.gov/arcgis/rest/services/3DEPElevationIndex/MapServer> (includes elevation, slope, and aspect). I clipped the raster to the prairie perimeters, and used Zonal Statistics to get several points for each DEM variable. In this code, I'm taking the mean of elevation, slope, and aspect.
+
+```{r}
+# Load library
+library(readxl)
+
+#Read in the data
+dem_path <- here::here("data", "DEM_10m.xlsx") # Needs to be a string
+
+# Create a function to standardize the Site names
+clean_site <- function(x) {
+  x %>%
+    #Make column text
+    as.character() %>%
+    #Remove leading/trailing spaces 
+    str_trim() %>%
+    # Remove the underscores in WR
+    str_replace_all("^WR_5$",  "WR5") %>%
+    str_replace_all("^WR_13$", "WR13") %>%
+    str_replace_all("^WR_22$", "WR22")
+}
+
+# Create a function to summarize a DEM sheet by Site and Treatment
+ # Detect variable column (Elevation, Slope, and Aspect)
+ # Calculates mean per Site
+ # Sheets ending in *_unburn are Treatment = Control
+ #Sheets ending in *_burn are Treatment = Burn
+process_dem_sheet <- function(sheet_name) {
+
+  # Keep the original sheet name EXACTLY for read_excel()
+   # Had trailing spaces
+  sheet_name_orig <- sheet_name
+
+  # Use a trimmed/lowercase copy ONLY for pattern matching
+  sheet_low <- tolower(stringr::str_trim(sheet_name_orig))
+
+  # Read one sheet (must match exactly, including trailing spaces)
+  df <- readxl::read_excel(dem_path, sheet = sheet_name_orig)
+
+  # Remove OBJECTID if it exists
+  if ("OBJECTID" %in% names(df)) {
+    df <- df %>% dplyr::select(-OBJECTID)
+  }
+
+  #Standardize Site names + remove MC
+  df <- df %>%
+    dplyr::mutate(Site = clean_site(Site)) %>%
+    dplyr::filter(!is.na(Site), Site != "MC")
+
+  # Infer Treatment from sheet name 
+  Treatment_value <- dplyr::case_when(
+    stringr::str_detect(sheet_low, "unburn") ~ "Control",
+    stringr::str_detect(sheet_low, "burn")   ~ "Burn",
+    TRUE ~ NA_character_
+  )
+  #Safety check
+  if (is.na(Treatment_value)) {
+    stop(paste0(
+      "Could not infer Treatment for sheet '", sheet_name_orig, "'. ",
+      "Expected sheet name to include 'unburn' or 'burn'."
+    ))
+  }
+
+  df <- df %>% dplyr::mutate(Treatment = Treatment_value)
+
+  # Identify the variable column (besides Site and Treatment)
+  variable_col <- setdiff(names(df), c("Site", "Treatment"))
+  
+  #Safety check
+  if (length(variable_col) != 1) {
+    stop(paste0(
+      "Sheet '", sheet_name_orig, "' has unexpected columns besides Site/Treatment: ",
+      paste(variable_col, collapse = ", "),
+      ". Expected exactly ONE variable column."
+    ))
+  }
+
+  # Summarise mean by Site + Treatment (integer)
+  df %>%
+    dplyr::mutate(value = as.numeric(.data[[variable_col]])) %>%
+    dplyr::group_by(Site, Treatment) %>%
+    dplyr::summarise(mean_value = round(mean(value, na.rm = TRUE), 0), .groups = "drop") %>%
+    dplyr::mutate(variable = tolower(variable_col)) %>%
+    dplyr::select(Site, Treatment, variable, mean_value)
+}
+
+#Get list of sheets in the excel workbook
+sheet_names <- excel_sheets(dem_path)
+
+# Process the sheets
+dem_long <- purrr::map_dfr(sheet_names, process_dem_sheet)
+
+# Convert to wide format
+DEM <- dem_long %>%
+  pivot_wider(
+    names_from = variable,
+    values_from = mean_value
+  ) %>%
+  select(Site, Treatment, any_of(c("elevation", "slope", "aspect"))) %>%
+  arrange(Site, Treatment)
+
+## Note - there is no Transect_ID for this predictor variable
+```
+
+## 3 - Soil Properties
+
+First, I want to summarize the soil texture data which was measured in the lab using the hydrometer method. I have to clean up the dataset to include Site, Treatment, Transect_ID, and then only obtain the % Sand, % Silt, and % Clay numbers.
+
+```{r}
+#Read in data
+soil_texture <- read_csv(here("data", "soil_texture.csv"))
+
+# Standardize column names
+ # This keeps the original names, but makes it easier to reference if there are extra spaces.
+names(soil_texture) <- str_trim(names(soil_texture))
+
+texture <- soil_texture %>% 
+# Remove excluded transects
+  filter(
+    !str_detect(Transect, "^(CCD|QV|SLP|SPR)"), # Get rid of these
+    # Get rid of the other Andrew Molera site (Plot 4)
+    !(str_detect(Transect, "^AM") & str_detect(tolower(Transect), "(p4|plot\\s*4)"))
+  ) %>%
+#Remove the "_SC" token so Treatment/Transect tokens align
+  mutate(
+    Transect_clean = Transect %>%
+      str_replace_all("[_\\s-]+SC(?=[_\\s-]+)", "_") %>%  # SC in the middle
+      str_replace_all("[_\\s-]+SC$", "") %>%             # SC at end
+      str_replace_all("^SC[_\\s-]+", "")                 # SC at beginning (rare)
+  ) %>%
+
+# Tokenize & pull out key parts
+  mutate(
+    .tokens = str_split(Transect_clean, pattern = "[_\\s-]+"),
+
+    # Base site token (first token)
+    Site_raw = toupper(map_chr(.tokens, ~ .x[1] %||% NA_character_)),
+
+    # Treatment token should now be second token: B or C (Burn/Control)
+    Trt_code = toupper(map_chr(.tokens, ~ .x[2] %||% NA_character_)),
+
+    Treatment = case_when(
+      Trt_code == "B" ~ "Burn",
+      Trt_code == "C" ~ "Control",
+      TRUE ~ NA_character_
+    ),
+
+    # Transect token should now be third token: T1..T5
+    Transect_only = toupper(map_chr(.tokens, ~ .x[3] %||% NA_character_)),
+
+    # Extract plot number (for WR only), supports:
+    # P13 / P 13 / Plot 13 / P22 / 3/5 -> 5
+    Plot_raw = str_to_lower(Transect_clean),
+    Plot = case_when(
+      str_detect(Plot_raw, "3\\s*/\\s*5") ~ "5", #Change all 3 to 5
+      str_detect(Plot_raw, "\\bp\\s*\\d+\\b") ~ str_match(Plot_raw, "\\bp\\s*(\\d+)\\b")[,2],
+      str_detect(Plot_raw, "plot\\s*\\d+") ~ str_match(Plot_raw, "plot\\s*(\\d+)")[,2],
+      TRUE ~ NA_character_
+    ),
+
+    # Normalize non-WR site codes (These sites have 3 letters)
+    Site_raw = case_when(
+      Site_raw == "CS" ~ "CSR",
+      Site_raw == "TK" ~ "TKR",
+      TRUE ~ Site_raw
+    ),
+
+#Build Transect_ID and Site
+ #WR: Transect_ID = WR_B_T1_13 ; Site = WR13
+ #Others: Transect_ID = CSR_B_T1 ; Site = CSR, etc.
+    Transect_ID = case_when(
+      Site_raw == "WR" & !is.na(Plot) ~ str_c("WR", Trt_code, Transect_only, Plot, sep = "_"), #Create the site name for WR to be WR5, WR13, and WR22
+      TRUE ~ str_c(Site_raw, Trt_code, Transect_only, sep = "_")
+    ),
+
+    Site = case_when(
+      Site_raw == "WR" & !is.na(Plot) ~ paste0("WR", Plot),
+      TRUE ~ Site_raw
+    )
+  ) %>%
+# Keep only rows that successfully parsed
+  filter(
+    !is.na(Site),
+    !is.na(Treatment),
+    str_detect(Transect_only, "^T[1-5]$"),
+    Trt_code %in% c("B", "C")
+  ) %>%
+# Select final columns and rename texture vars
+  transmute(
+    Site,
+    Treatment,
+    Transect_ID,
+    sand = .data[["% Sand"]],
+    clay = .data[["% Clay"]],
+    silt = .data[["% Silt"]]
+  ) %>%
+  arrange(Site, Treatment, Transect_ID)
+
+# Remove excluded transects
+ # Remove any Transect starting with CCD, QV, SLP, SPR
+  #Remove AM Plot 4
+tex2 <- soil_texture %>%
+  filter(
+    !str_detect(Transect, "^(CCD|QV|SLP|SPR)"),
+    !(str_detect(Transect, "^AM") & str_detect(tolower(Transect), "(P4|plot\\s*4)"))
+  )
+
+# Helper function for %||% (base-style fallback for NULL)
+ # Return a if it exists and has length > 0.
+ # Inside str_split() results, some rows might not have enough tokens.
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0) a else b
+
+# Need to first clean up Transect_ID in texture to match nutrients (remove _Plot)
+texture <- texture %>%
+mutate(
+    # If it's WR_*_*_<plot>, rewrite as WR<plot>_*_*
+    Transect_ID = case_when(
+      # ([BC]) = treatment code ; (T[1-5]) = Transect ; (\\d+) = plot number
+      str_detect(Transect_ID, "^WR_[BC]_T[1-5]_\\d+$") ~ 
+        str_replace(Transect_ID, "^WR_([BC])_(T[1-5])_(\\d+)$", "WR\\3_\\1_\\2"),
+      TRUE ~ Transect_ID
+    ),
+    # Make Site match the new WR<plot> prefix when applicable
+    Site = case_when(
+      str_detect(Transect_ID, "^WR\\d+_") ~ str_extract(Transect_ID, "^WR\\d+"),
+      TRUE ~ Site
+    )
+  )
+
+```
+
+I now want to link this with the baseline soil nutrients data. This data was obtained from additional soil samples pre-burn, which was sent to Brookside Labs, OH. I also have post-burn soil nutrients for the **BURN**-only transects. I could possibly look at the change in soil nutrients, but most likely I should just use the pre-burn soil nutrients for Treatments = Burn and Control for all transects.
+
+```{r}
+#Read in data
+soil_nutrients <- read_csv(here("data", "soil_nutrients.csv"),
+                          skip = 7) # Removes top 7 rows with metadata
+
+# Trim any header whitespace
+names(soil_nutrients) <- str_trim(names(soil_nutrients))
+
+# Remove rows without Sample Location (the last two)
+soil_nutrients <- soil_nutrients %>%
+  filter(!is.na(`Sample Location`), str_trim(`Sample Location`) != "")
+
+# Clean Sample Location strings
+ # Remove CSR "_SC" 
+soil_nutrients  <- soil_nutrients  %>%
+  mutate(
+    sample_loc_raw = str_trim(`Sample Location`),
+    sample_loc = str_replace_all(sample_loc_raw, "_SC_", "_")  # only affects CSR_SC_...
+  )
+
+# Remove Sample Description and Lab Number
+soil_nutrients <- soil_nutrients %>%
+  select(
+    -`Sample Description #1`,
+    -`Lab Number`
+  )
+
+# Create Site, Treatment, Sample, Time
+soil_parsed <- soil_nutrients %>% 
+    mutate(
+  # Site: everything before the first underscore
+    Site = str_extract(sample_loc, "^[^_]+"),
+
+    # Treatment code extraction
+     # Burn if B, Control if C
+     # If "_C_B" appears, use the first (C) => Control
+    # Implementation:
+     # Prefer the first occurrence of "_B" or "_C" as a token
+    Trt_code = str_match(sample_loc, "_([BC])(?=_)")[, 2],
+
+    Treatment = case_when(
+      Trt_code == "B" ~ "Burn",
+      Trt_code == "C" ~ "Control",
+      TRUE ~ NA_character_
+    ),
+    
+    # Transect: find _T1.._T5 anywhere in the string
+    Transect = str_match(sample_loc, "_(T[1-5])(?:_|$)")[, 2],
+
+    # Transect_ID: Site_B/C_T# ----
+    Transect_ID = str_c(Site, Trt_code, Transect, sep = "_"),
+
+
+    # Sample:
+     # 1 if contains "_1to4"
+     # Otherwise 15/30/45 if contains "_15" or "_30" or "_45"
+    Sample = case_when(
+      str_detect(sample_loc, "_1to4") ~ 1L,
+      str_detect(sample_loc, "_15(?!\\d)") ~ 15L,
+      str_detect(sample_loc, "_30(?!\\d)") ~ 30L,
+      str_detect(sample_loc, "_45(?!\\d)") ~ 45L,
+      TRUE ~ NA_integer_
+    ),
+
+    # Time:
+     # Strings ending with "_post" for Post-burn.
+     # Best-practice rule: if it ends in "_post" => Post-burn, else Pre-burn
+    Time = case_when(
+      str_detect(sample_loc, "_post$") ~ "Post-burn",
+      TRUE ~ "Pre-burn"
+    )
+  )
+
+# Getting rid of helper columns
+nutrients <- soil_parsed %>%
+  # Keep all original columns, plus new ones
+  select(Site, Treatment, Transect, Transect_ID, Sample, Time, everything()) %>%
+  # Drop helper columns
+  select(-`Sample Location`, -sample_loc_raw, -sample_loc, -Trt_code)
+
+# Clean up nutrients mistakes 
+nutrients <- nutrients %>%
+# Replace Site WR with WR22
+  mutate(
+    Site = if_else(Site == "WR", "WR22", Site)
+  ) %>%
+# Update Transect_ID to include WR22 instead of WR
+  mutate(
+    Transect_ID = stringr::str_replace(Transect_ID, "^WR_", "WR22_")
+  ) %>%
+# Remove MC rows
+  filter(Site != "MC")
+
+```
+
+Now, I want to combine soil texture and soil nutrients, to get one table for soil properties.
+
+```{r}
+# Join nutrients with soil texture 
+soil_properties <- nutrients %>%
+  left_join(
+    texture,
+    by = c("Site", "Treatment", "Transect_ID")
+  )
+
+# Double-check output
+print(soil_properties)
+```
+
+## 4 - Composite Burn Index
+
+My final predictor variable needs to quantify the various burns. It was recommended that I compile multiple components into a Composite Burn Index. I measured pre- and post litter right before and after the burn for both Burn and Control. I also have pre-burn residual dry matter, as well as post-burn burn severity in cover classes (% Black, % Living Green, % New Green, % Bare Ground).
+
+To quantify fire effects across vegetation, litter, and fuel characteristics, I developed a Composite Burn Index (CBI) using a scaled continuous scoring system. For each component (e.g., residual dry matter, litter consumption, and burn severity), raw field measurements were rescaled from 0 to 3 using min-max normalization, such that:
+
+-   Score= 3 × \[Value−min(Value)/\[max(Value)−min(Value)​\]
+
+    -    Minimum and maximum values are the minimum and maximum score from all of the transects combined
+
+These scale each fuel/severity component based on assumptions/rationale:
+
+-   **RDM_Score**: Higher biomass = higher potential intensity.
+
+-   **Litter_Score**: Greater litter reduction = more intense burn.
+
+-   **Severity_Score**: Combines Black + Bare_Ground − (Living + New Green + Dried Unburned).
+
+    -   Higher = more visible burn effects.
+
+According to the *NPS Fire Monitoring Handbook*, these are the standard on how to assess burn severity in grasslands:
+
+-   **Unburned:** [VEGETATION]{.underline}: not burned; [SUBSTRATE]{.underline}: not burned
+
+-   **Scorched:** [VEGETATION]{.underline}: Foliage is scorched; litter partially blackened; [SUBSTRATE]{.underline}: duff nearly unchanged; leaf structures unchanged
+
+-   **Lightly Burned**: [VEGETATION]{.underline}: Grasses with approximately two inches of stubble; foliage and smaller twigs of associated species partially to completely consumed; some plant parts may still be standing; bases of plants are not deeply burned and are still recognizable; [SUBSTRATE]{.underline}: Litter charred to partially consumed, but some plant parts are still discernible; charring may extend slightly into soil surface, but soil is not visibly altered; surface appears black (this soon becomes inconspicuous); burns may be spotty to uniform depending on the grass continuity.
+
+-   **Moderately Burned**: [VEGETATION]{.underline}: Unburned grass stubble, usually less than 2 inches tall, and mostly confined to an outer ring; for other species, foliage completely consumed, plant bases are burned to ground level and obscured in ash immediately after burning; burns tend to be uniform; [SUBSTRATE]{.underline}: leaf litter consumed, leaving coarse, light gray or white colored ash immediately after the burn; ash soon disappears leaving bare mineral soil; charring may extend slightly into soil surface
+
+-   **Heavily Burned**: [VEGETATION]{.underline}: No unburned grasses above the root crown; for other species, all plant parts consumed leaving some or no major stems or trunks, any left are deeply charred; this severity class is uncommon due to the short burnout time of grasses; [SUBSTRATE]{.underline}: leaf litter completely consumed, leaving a fluffy white ash, this soon disappears leaving bare mineral soil; charring extends to a depth of 1 cm (0.5 in) into the soil; this severity class is usually limited to situations where heavy fuel load on mesic sites has burned under dry conditions and low wind.
+
+To interpret the CBI index, I will base scores off of above descriptions, averaging the three scores:
+
+-   0.0 – 0.9: Unburned or lightly scorched
+
+-   1.0 – 1.9: Low to moderate severity
+
+-   2.0 – 2.9: Moderate to high severity
+
+-   3.0: Extreme severity (rare in grasslands)
+
+```{r}
+# Load data
+burn_severity <- read_csv(here("data", "master_burn_severity.csv"))
+litter <- read_csv(here("data", "master_litter_veght.csv"))
+# Use rdm from aboveground_measurements (from 3- Aboveground Biomass)
+# aboveground_measurements <- read_csv(here("data", "rdm_fireintensity_soilmoisture.csv"))
+
+## Burn Severity Scores (Percent Cover)
+# Step 1: # Convert location columns to numeric
+burn_severity <- burn_severity %>%
+  mutate(across(as.character(seq(5, 50, by = 5)), ~ as.numeric(as.character(.))))
+
+# Now pivot longer
+burn_data_long <- burn_severity %>%
+  pivot_longer(
+    cols = all_of(as.character(seq(5, 50, by = 5))),
+    names_to = "Location_m",
+    values_to = "Percent_Cover"
+  ) %>%
+  mutate(Location_m = as.numeric(Location_m)  # Ensure Location is numeric
+) %>%
+  select(Year, Site, Transect_ID, Location_m, Cover_Class, Percent_Cover)  # Final column order
+
+# Summarize mean by Year, Site, Transect_ID, and Cover_Class
+burn_severity_summary <- burn_data_long %>%
+  group_by(Year, Site, Transect_ID, Cover_Class) %>%
+  summarise(
+    Mean_Cover = round(mean(Percent_Cover, na.rm = TRUE), 2),
+    .groups = "drop"
+  )
+
+# Summarize Severity_Raw and Severity_Score by group
+burn_severity_summary <- burn_severity_summary %>%
+  #Cover classes needed for the Burn Severity Calculation
+  filter(Cover_Class %in% c("Black", "Bare_Ground", "Dried_Unburned", "Living_Green", "New_Green")) %>% 
+   #Group by Year, Site, Transect_ID and extract Mean_Cover for required Cover_Class
+  select(Year, Site, Transect_ID, Cover_Class, Mean_Cover) %>%                     
+  pivot_wider(names_from = Cover_Class, values_from = Mean_Cover, values_fill = 0) %>%
+  #How to calculate the score for burn severity with cover class
+  mutate(
+    Severity_Raw = Black + Bare_Ground - (Dried_Unburned + Living_Green + New_Green)   
+  ) %>%
+  mutate(
+    #Need to rescale for 0-3, since that's all the other scales
+    Severity_Score = 3 * (Severity_Raw - min(Severity_Raw, na.rm = TRUE)) /     
+      (max(Severity_Raw, na.rm = TRUE) - min(Severity_Raw, na.rm = TRUE))       
+    # min is the lowest Severity_Raw across all transects
+    # max is the highest Severity_Raw across all transects
+  )
+
+# Add Treatment = "Burn" to the burn severity summary to allow merge
+burn_severity_summary <- burn_severity_summary %>% mutate(Treatment = "Burn")
+
+## Litter Scores
+# Convert Litter_cm to numeric if needed
+litter <- litter %>%
+  mutate(
+    Litter_cm = as.numeric(Litter_cm),
+  )
+
+# Summarize Litter (Before/After) for each Year/Site/Treatment/Transect_ID
+litter_summary <- litter %>%
+  group_by(Year, Site, Treatment, Transect_ID, Timepoint) %>%
+  summarise(
+    Litter = mean(Litter_cm, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = Timepoint,
+    values_from = c(Litter),
+    names_glue = "Litter_{Timepoint}"
+  )
+
+# Calculate Litter Consumption
+litter_summary <- litter_summary %>%
+  mutate(
+    Litter_Consumption = Litter_Before - Litter_After)
+
+#Create scaled continuous scores based on linear rescaling methods
+# This normalized the values between 0 to 1, and then scales them up to 3
+# This accounts for the actual spread of values, rather than fixed bins
+
+# Calculate the min and max for the scaling range
+litter_min <- min(litter_summary$Litter_Consumption, na.rm = TRUE)
+litter_max <- max(litter_summary$Litter_Consumption, na.rm = TRUE)
+
+# Apply continuous 0–3 scaled scores for Litter and Veg Scores
+litter_summary <- litter_summary %>%
+  mutate(
+    Litter_Score = round(3 * (Litter_Consumption - litter_min) / (litter_max - litter_min), 2)
+  )
+
+# Residual Dry Matter (RDM) Scores
+# Calculate mean for RDM_g
+rdm_summary <- aboveground_measurements %>%
+  group_by(Year, Site, Transect_ID, Treatment) %>%
+  summarise(
+    RDM = round(mean(RDM_g_preburn, na.rm = TRUE), 2),
+    .groups = "drop"
+  )
+
+# Calculate the min and max for the scaling range
+rdm_min <- min(rdm_summary$RDM, na.rm = TRUE)
+rdm_max <- max(rdm_summary$RDM, na.rm = TRUE)
+
+# Apply continuous 0–3 RDM_Score
+rdm_summary <- rdm_summary %>%
+  mutate(
+    RDM_Score = round(3 * RDM - rdm_min) / (rdm_max - rdm_min), 2)
+
+#Get rid of random column called "2"
+rdm_summary <- rdm_summary %>% select(-`2`)
+
+## Combine All Scores
+# Merge all datasets by Year, Site, Transect_ID, and Treatment
+CBI <- litter_summary %>%
+  full_join(rdm_summary, by = c("Year", "Site", "Transect_ID", "Treatment")) %>%
+  full_join(burn_severity_summary, by = c("Year", "Site", "Transect_ID", "Treatment"))
+
+# Calculate the CBI as the mean of the four component scores
+CBI <- CBI %>%
+  mutate(CBI = ifelse(Treatment == "Burn",
+                      round((Litter_Score + RDM_Score + Severity_Score) / 4, 2),
+                      NA))
+
+# Create categorical column to described Composite Burn Index (CBI) and keep only Burn Transects
+CBI <- CBI %>%
+  mutate(
+    CBI_Category = case_when(
+      Treatment == "Control" ~ NA_character_,
+      CBI >= 3               ~ "Extreme",
+      CBI >= 2               ~ "Moderate_to_High",
+      CBI >= 1               ~ "Low_to_Moderate",
+      CBI >= 0               ~ "Unburned_to_Scorched",
+      TRUE                   ~ NA_character_
+    )
+  ) %>% 
+  # Keep only burned transects
+  filter(Treatment == "Burn")
+
+#Look at the table
+print(CBI)
+```
+
+## [Analysis Ready Data Frames]{.underline}
+
+I now want to build a transect-level master table (Site x Treatment x Transect_ID), then left-join predictors at the appropriate levels:
+
+-   **Site-level predictors** (weather_final) join by `Site`
+
+-   **Site×Treatment predictors** (DEM) join by `Site + Treatment`
+
+-    **Transect-level predictors** (soil_properties) join by `Site + Treatment + Transect_ID`
+
+    -   Most likely only looking at Time == Pre-burn (Baseline soil conditions)
+
+<!-- -->
+
+-    **Burn-only predictors** (CBI) join by `Year + Site + Transect_ID`
+
+Then, I'll attach each response:
+
+-   `soil_C_change` (all sites/years, both treatments) join by `Site + Treatment + Transect_ID`
+
+<!-- -->
+
+-    `roots` and `RDM_change` (2024 subset) join by `Site + Treatment + Transect_ID`
+
+The script produces two final data frames:
+
+1.  `predictors_master` (baseline predictors at transect-level)
+2.  `analysis_carbon` (master + all response columns)
+
+```{r}
+##Build analysis-ready dataframe for exploratory plots + models
+
+# Load libraries
+library(dplyr)
+library(stringr)
+
+### First, need to make some fixes among tables
+# (1) Fix the mislabeling of transects. In one of my data frames, the Control Transect_ID is labeled with _C_B, rather than just _C
+fix_transect_id <- function(df) {
+  if (!("Transect_ID" %in% names(df))) return(df)
+
+  df %>%
+    mutate(
+      Transect_ID = str_replace(Transect_ID, "_C_B_", "_C_"))
+}
+# keys
+soil_C_change   <- fix_transect_id(soil_C_change)
+roots           <- fix_transect_id(roots)
+RDM_change      <- fix_transect_id(RDM_change)
+soil_properties <- fix_transect_id(soil_properties)
+CBI             <- fix_transect_id(CBI)
+# DEM and weather_final don't use Transect_ID, so no need
+
+## (2) Also, some of the data frames don't have Year
+ # Need to fix this by joining site-year from weather_final table
+ #Soil C Change
+soil_C_change <- soil_C_change %>%
+  left_join(weather_final %>% select(Site, Year) %>% distinct(), by = "Site")
+ # RDM Change
+RDM_change <- RDM_change %>%
+  left_join(weather_final %>% select(Site, Year) %>% distinct(), by = "Site")
+
+# (3) Need to take the mean of Transect_ID for those that have multiple samples
+ # e.g. 3 - 4 soil samples
+ # Create a helper function to take the mean of samples for each transect
+mean_by_transect <- function(df, keys = c("Year","Site","Treatment","Transect_ID")) {
+
+  # keep only keys that exist in the dataframe
+  keys <- keys[keys %in% names(df)]
+
+  df %>%
+    group_by(across(all_of(keys))) %>%
+    summarise(
+      across(where(is.numeric), ~ mean(.x, na.rm = TRUE)),
+      .groups = "drop"
+    )
+}
+
+## Transect- Level Response Tables
+# Responses: Soil C change (and optional raw C)
+soil_C_transect <- soil_C_change %>%
+  select(any_of(c(
+    "Year","Site","Treatment","Transect_ID",
+    "final_Carbon_pct", "final_C_Mg_per_ha",
+    "Carbon (%)_Pre-burn", "Carbon (%)_Post-burn"
+  ))) %>%
+  mean_by_transect(keys = c("Year","Site","Treatment","Transect_ID"))
+
+ # Responses: Roots (post-burn only; 2024 burns)
+roots_transect <- roots %>%
+  select(any_of(c("Year","Site","Treatment","Transect_ID","Roots_g_per_m2"))) %>%
+  mean_by_transect(keys = c("Year","Site","Treatment","Transect_ID"))
+
+ # Responses: Aboveground Biomass - RDM change and raw data
+RDM_transect <- RDM_change %>%
+  select(any_of(c(
+    "Year","Site","Treatment","Transect_ID",
+    "final_RDM",
+    "RDM_g_preburn","RDM_g_postburn"
+  ))) %>%
+  mean_by_transect(keys = c("Year","Site","Treatment","Transect_ID"))
+
+# Check to make sure they are unique (n=0) ; 1 row per transect
+soil_C_transect %>% count(Year, Site, Treatment, Transect_ID) %>% filter(n > 1)
+roots_transect  %>% count(Year, Site, Treatment, Transect_ID) %>% filter(n > 1)
+RDM_transect    %>% count(Year, Site, Treatment, Transect_ID) %>% filter(n > 1)
+
+# (4) Create a helper function: standardize key columns across dataframes
+#    Ensures Site/Treatment/Transect_ID are consistent types
+standardize_keys <- function(df) {
+  df %>%
+    mutate(
+      Site = as.character(Site),
+      Treatment = if ("Treatment" %in% names(.)) as.character(Treatment) else Treatment,
+      Transect_ID = if ("Transect_ID" %in% names(.)) as.character(Transect_ID) else Transect_ID
+    )
+}
+
+soil_C_change   <- standardize_keys(soil_C_change) #soil carbon
+roots           <- standardize_keys(roots) # root biomass
+RDM_change      <- standardize_keys(RDM_change) # RDM 
+# weather_final   <- standardize_keys(weather_final) # weather predictors
+ # No Treatment
+# DEM             <- standardize_keys(DEM) # topography
+ # No Transect_ID
+soil_properties <- standardize_keys(soil_properties) # soil nutrients and texture
+CBI             <- standardize_keys(CBI) # Composite Burn Index (CBI)
+
+#
+
+# Build the core "transect master" index
+ # Using the union of keys from the response tables
+transect_index <- bind_rows(
+  soil_C_change %>% select(any_of(c("Year","Site","Treatment","Transect_ID"))),
+  roots         %>% select(any_of(c("Year","Site","Treatment","Transect_ID"))),
+  RDM_change    %>% select(any_of(c("Year","Site","Treatment","Transect_ID")))
+) %>%
+  distinct() %>%
+  filter(!is.na(Site), !is.na(Treatment), !is.na(Transect_ID))
+
+# Build Transect- Level Predictors Table (each must be 1 row per join key)
+# Predictors: Weather (site-level only; cols 4:28)
+weather_pred <- weather_final %>%
+  select(Site, all_of(names(weather_final)[4:28])) %>%
+  distinct(Site, .keep_all = TRUE)
+
+# Predictors: DEM (site-level + treatment; cols 3:5)
+DEM_pred <- DEM %>%
+  select(Site, Treatment, all_of(names(DEM)[3:5])) %>%
+  distinct(Site, Treatment, .keep_all = TRUE)
+
+# 6) Predictors: Soil properties baseline (transect-level; Time == Pre-burn; cols 7:34)
+soil_pred_pre <- soil_properties %>%
+  filter(Time == "Pre-burn") %>%
+  select(Site, Treatment, Transect_ID, all_of(names(soil_properties)[7:34])) %>%
+  distinct(Site, Treatment, Transect_ID, .keep_all = TRUE)
+
+# Predictors: CBI (burn-only Treatment; keep other scores)
+ # Join by Year+Site+Transect_ID (Treatment is always Burn)
+cbi_pred <- CBI %>%
+  select(any_of(c(
+    "Year","Site","Transect_ID",
+    "CBI","CBI_Category",
+    "Litter_Score","RDM_Score","Severity_Score"
+  ))) %>%
+  distinct(Year, Site, Transect_ID, .keep_all = TRUE)
+
+# Final analysis dataframe (predictors + all responses)
+ # predictors_master is all of the predictor variables
+ # analysis_carbon is all of the predictor variables with carbon response variables
+analysis_carbon <- transect_index %>%
+  # predictors
+  left_join(weather_pred,  by = "Site") %>%
+  left_join(DEM_pred,      by = c("Site","Treatment")) %>%
+  left_join(soil_pred_pre, by = c("Site","Treatment","Transect_ID")) %>%
+  left_join(cbi_pred,      by = c("Year","Site","Transect_ID")) %>%
+  # response (mean of samples from each transect)
+  left_join(soil_C_transect, by = c("Year","Site","Treatment","Transect_ID")) %>%
+  left_join(roots_transect,  by = c("Year","Site","Treatment","Transect_ID")) %>%
+  left_join(RDM_transect,    by = c("Year","Site","Treatment","Transect_ID"))
+
+# Quick QA/QC checks
+ # Check how many rows and missingness for key response variables
+ # Need 1 row per transect key
+dup_check <- analysis_carbon %>%
+  count(Year, Site, Treatment, Transect_ID) %>%
+  filter(n > 1)
+
+print(dup_check)  # should be 0 rows
+
+qa_summary <- analysis_carbon %>%
+  summarise(
+    n = n(),
+    n_soilC_pct = sum(!is.na(final_Carbon_pct)),
+    n_soilC_Mg  = sum(!is.na(final_C_Mg_per_ha)),
+    n_roots     = sum(!is.na(Roots_g_per_m2)),
+    n_rdm       = sum(!is.na(final_RDM))
+  )
+
+print(qa_summary)
+
+# Optional: identify rows missing baseline soil predictors (often a key join issue)
+# analysis_carbon %>% filter(is.na(sand) & is.na(silt) & is.na(clay)) %>% select(Year,Site,Treatment,Transect_ID) %>% head(20)
+
+# Look at final merge
+head(analysis_carbon)
+
+# Diagnostic for each Site
+ # This is the Sample Size Table
+analysis_carbon %>%
+  summarise(
+    soilC = sum(!is.na(final_Carbon_pct)),
+    roots = sum(!is.na(Roots_g_per_m2)),
+    rdm   = sum(!is.na(final_RDM)),
+    .by = Site
+  )
+## 10 soils for AM, WR22, and CF since it also has Pre- and Post-burn for Controls
+## PL roots and RDM have three missing since there are only 2 control transects
+## WR5 has a missing soil C since it has only 4 burn transects (1 didn't burn)
+## WR5 has one missing RDM (I think it was lost)
 ```
