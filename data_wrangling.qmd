@@ -247,9 +247,7 @@ I found the burn date for each site from the CAL FIRE FRAP (Fire and Resource As
 
 -   CIMIS for WR22, WR13, WR5, and MF (De Laveagea (104); 36.997444, -121.99676), PL (Pacific Grove (193); 36.63322, -121.93486), and TKR (Pescadero (253); 37.255333, -122.3708)
 
-I have weather data for the day of the burn, number of days since rainfall event ≥ 7 mm (antecedent precip), the 5-day average for weather variables including the burn date during the week leading up to the burn, and finally the 5-year average for all weather variables.
-
-print(weather_final)
+I have weather data for the day of the burn, number of days since rainfall event ≥ 7 mm (antecedent precip), the 5-day average for weather variables (including the burn date) during the week leading up to the burn, and finally the 5-year average for all weather variables.
 
 ```{r}
 # Load libraries to deal with excel spreadsheet
@@ -1086,6 +1084,24 @@ CBI <- CBI %>%
 
 #Look at the table
 print(CBI)
+
+## Also a good idea to have pre-burn litter as a predictor variable
+head(litter)
+
+#Create a new dataframe for Litter pre-burn
+Litter_Pre_burn <- litter %>%
+  # Keep only pre-burn measurements
+  filter(Timepoint == "Before") %>%
+  # Select relevant columns
+  select(Year, Site, Treatment, Transect_ID, Location_m, Litter_cm) %>%
+  # Average the 10 measurements within each transect
+  group_by(Year, Site, Treatment, Transect_ID) %>%
+  
+  summarise(
+    Litter_Pre_burn = mean(Litter_cm, na.rm = TRUE),
+    .groups = "drop"
+  )
+
 ```
 
 ## [Analysis Ready Data Frames]{.underline}
@@ -1172,7 +1188,8 @@ soil_C_transect <- soil_C_change %>%
   select(any_of(c(
     "Year","Site","Treatment","Transect_ID",
     "final_Carbon_pct", "final_C_Mg_per_ha",
-    "Carbon (%)_Pre-burn", "Carbon (%)_Post-burn"
+    "Carbon (%)_Pre-burn", "Carbon (%)_Post-burn",
+    "C_Mg_per_ha_Pre-burn","C_Mg_per_ha_Post-burn"
   ))) %>%
   mean_by_transect(keys = c("Year","Site","Treatment","Transect_ID"))
 
@@ -1267,7 +1284,20 @@ analysis_carbon <- transect_index %>%
   # response (mean of samples from each transect)
   left_join(soil_C_transect, by = c("Year","Site","Treatment","Transect_ID")) %>%
   left_join(roots_transect,  by = c("Year","Site","Treatment","Transect_ID")) %>%
-  left_join(RDM_transect,    by = c("Year","Site","Treatment","Transect_ID"))
+  left_join(RDM_transect,    by = c("Year","Site","Treatment","Transect_ID")) %>% 
+  left_join(Litter_Pre_burn, by = c("Year","Site","Treatment","Transect_ID"))
+
+# Added in Pre-burn Litter later
+analysis_carbon <- analysis_carbon %>%
+  left_join(Litter_Pre_burn,
+            by = c("Year", "Site", "Treatment", "Transect_ID"))
+
+# Need to get rid of .y and .x
+analysis_carbon <- analysis_carbon %>%
+  mutate(
+    Litter_Pre_burn = coalesce(Litter_Pre_burn.x, Litter_Pre_burn.y)
+  ) %>%
+  select(-Litter_Pre_burn.x, -Litter_Pre_burn.y)
 
 # Quick QA/QC checks
  # Check how many rows and missingness for key response variables
