@@ -1,0 +1,85 @@
+*Notes for metadata*
+
+bulk_density
+- The small cores were 4.9 cm diameter X 5.1 cm deep, thus:
+V = π r2 h
+V = π (2.46^2) (5.1) = 96.96 cm3
+
+- The larger cores from the first three burns were 5 cm diameter x 13 cm deep
+V = π (2.5^2) (13) = 255.25 cm3
+- Originally, the soil volume was incorrect, so now the true bulk density in the 11th column (K) called "Correct bulk density"
+
+rdm_fireintensity_soilmoisture
+- rdm pre-burn for all sites
+- soil moisture for all sites
+- fire intensity tags - none for 2023 burns (AM, CF, WR22)
+- rdm post-burn for 2024 burns
+(missing WR13_C_B_T2 - 30 ; also don't have them for WR5_B_T5 for 15, 30, and 45 since this site didn't end up burning
+
+root_biomass
+- Year (2024) 
+- Site (MF, WR5, WR13, CSR, TKR, PL)
+- Transect_ID (MF_B_T1)
+- Treatment (Burn, Control)
+- Transect (1, 2, 3, 4, 5)
+- Sample (15, 30, 45)
+- Roots_g_per_m2 (dry weight * 509.295817894)
+The volume of each soil core (5 cm diameter, 15 cm length) was 294.52 cm^3 ; V = π r2 h or V = π (2.5 x 2.5)(15). Root biomass per unit of ground area (g/m^2) from V = A d or V = (100 cm)(100cm)(15 cm) = 150,000 cm^3. Thus, each core sample represents 294.52 cm^3 of 150,000 cm^3. To convert dry roots to g/m^2, we multiplied dry weight (g) by the inverse of the fraction (150,000/294.52) to get the root biomass of each sample (Roots_g_per_m2).
+- TKR_B_T5 (45) is missing a sample
+
+soil_C_N_2023
+- Only for 2023 burns (AM, WR22, and CF)
+- For AM, we sent in four samples per transect (10, 20, 30, 40 m) both for before and after the burn ; syntax (AM-B-T1-10 for pre and AM-A-T1-10 for post)
+- Also use the -C-B format for controls (AM-C-B-T1-10)
+- For WR22 (called WR in this dataset) and CF, we sent in one composite sample per transect from the 10, 20, 30, and 40 m samples (WR_B_T1_1to4) ; also for controls (WR_C_B_T1_1to4) both pre (_B) and post (_A)
+
+soil_C_N_2024
+- Only have T1 and T2 for PL_C
+- Sample location needs to be broken up to being Transect, Sample, Time (PL_B_T1_15_pre should be Transect: PL_B_T1, Sample: 15, and Time: pre ; Include new column called Treatment : Burn/Control, where _C is Control and _B is Burn
+- Only post soil sample for Treatment = Burn
+
+soil_nutrients
+- 2023 burns (AM, WR22, and CF) had four soil samples per transect (10, 20, 30, 40-m). These were homogenized and sent in for soil soil nutrients (1 per transect). The annotation is AM_B_T1_1to4
+- This is also done for the controls: AM_C_B_T1_1to4
+- 2024 burns have three samples per transect (15, 30, 45) that were measured separately ; the syntax is PL_B_T1_15_pre
+- 2024 burns in the control for whatever reason don't have the _pre in the Sample Location, but they were sampled pre-burn ; syntax is PL_C_T1_15 (not C_B_ like the 2023 burns)
+- Only have WR_B_T5_15_pre -- should remove since it didn't burn 
+- Didn't end up using MC (Molino Creek) - can remove this site for all Sample Location
+- Crystal Springs is CSR_SC -- eventually just make it CSR
+- Post-burn soil nutrients for 2024 burns, which includes _post ; syntax is PL_B_T1_15_post
+
+soil_texture
+- % Sand, % Clay, % Silt using the hydrometer method
+- Get rid of AM-B-T1 (P4), CCD, QV, SLP - sites did not burn
+
+
+weather
+- RAWS for CSR (Pulgas California; 37.475, -122.298056), CF (Coast Dairies California; 37.030833,	-122.187778), AM (Big Sur California; 36.235556, -121.785)
+- CIMIS for WR22, WR13, WR5, and MF (De Laveagea (104); 36.997444, -121.99676), PL (Pacific Grove (193); 36.63322, -121.93486), TKR (Pescadero (253); 37.255333, -122.3708)
+- date	Date	mm/yyyy
+- year	Year	yyyy
+- Jul	Day of Year	d
+- wind_speed	Mean Wind Speed	m/s
+- mean_temp	Average Air Temperature	Deg C (Celsius)
+- max_temp	Maximum Temperature	Deg C (Celsius)
+- min_temp	Minimum Temperature	Deg C (Celsius)
+- mean_humidity	Average Relative Humidity	%
+- max_humidity	Maximum Relative Humidity	%
+- min_humidity	Minimum Relative Humidity	%
+- precipitation	Total Precipitation	millimeters (mm)
+- days_since_precip	Days Since Rainfall Preburn  (Needs to be greater than 7 mm)	number of days
+- antecedent_precip	Antecedent Rainfall Event	millimeters (mm)
+
+topography
+- Created polygons around each burn and control prairie in ArcGIS Pro
+- Downloaded topography raster (DEM) from The National Map (3DEP) with 10m resolution (10 m x 10 m = 100 m2 on the ground): https://index.nationalmap.gov/arcgis/rest/services/3DEPElevationIndex/MapServer (includes elevation, slope, and aspect)
+- Clipped raster to the prairie perimeters
+- Used Zonal Statistics 
+
+
+
+ 
+
+
+
+
