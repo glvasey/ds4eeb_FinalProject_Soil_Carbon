@@ -3,9 +3,9 @@
 
 Written by
 
-Georgia Vasey
-Department of Environmental Studies
-University of California Santa Cruz
+Georgia Vasey<br>
+Department of Environmental Studies<br>
+University of California Santa Cruz<br>
 Santa Cruz, CA USA
 
 **The motivating question:** Does fire change soil carbon in coastal prairies? If yes, is this moderated by topography, soil properties, burn severity, or weather parameters?
@@ -18,23 +18,23 @@ This study compared SOC in nine paired prescribed burn and unburned prairies in 
 
 **Target audience:** This repository is being prepared to eventually share with reviewers in a scientific journal for a future publication.
 
-**Repository Structure:**
-data/
-   raw/              # Raw field and environmental datasets
-   processed/        # Cleaned datasets used for analysis (.rds files)
+**Repository Structure:**<br>
+data/<br>
+   raw/              # Raw field and environmental datasets<br>
+   processed/        # Cleaned datasets used for analysis (.rds files)<br>
 
-figures/
-   exploratory/      # Automatically saved exploratory plots
+figures/<br>
+   exploratory/      # Automatically saved exploratory plots<br>
 
-images/              # DAGs
+images/              # DAGs<br>
 
-scripts/
-   data_wrangling.qmd        # Data cleaning and merging
-   exploratory_plots.qmd     # Exploratory visualizations
-   explantory_analysis.qmd              # Bayesian statistical models
+scripts/<br>
+   data_wrangling.qmd        # Data cleaning and merging<br>
+   exploratory_plots.qmd     # Exploratory visualizations<br>
+   explantory_analysis.qmd              # Bayesian statistical models<br>
 
-output/
-   models/           # Saved brms model objects
+output/<br>
+   models/           # Saved brms model objects**<br>
 
 **How to Reproduce the Analysis:**
 1. Run data_wrangling.qmd to create analysis datasets: merges vegetation, soil, climate, and burn datasets; creates the analysis dataset analysis_carbon
