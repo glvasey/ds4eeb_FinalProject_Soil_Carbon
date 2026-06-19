@@ -358,13 +358,18 @@ print(soil14)
 # Print Exploratory Plots for Quarto Document
 # Create helper function to save the plot into figures
 # Create helper function to save plots
-save_plot <- function(plot_obj, name, subfolder, w = 6, h = 4) {
+save_plot <- function(plot_obj, 
+                      name,
+                      figure_type = "exploratory",
+                      subfolder, 
+                      w = 6, 
+                      h = 4) {
 
-  dir.create(file.path("figures", "exploratory", subfolder),
+  dir.create(file.path("figures", figure_type, subfolder),
              showWarnings = FALSE, recursive = TRUE)
 
   ggsave(
-    filename = file.path("figures", "exploratory", subfolder, paste0(name, ".png")),
+    filename = file.path("figures", figure_type, subfolder, paste0(name, ".png")),
     plot = plot_obj,
     width = w,
     height = h,
@@ -394,7 +399,12 @@ exploratory_plots_soil <- list(
 )
 
 for(n in names(exploratory_plots_soil)) {
-  save_plot(exploratory_plots_soil[[n]], n, "soil")
+  save_plot(
+    plot_obj = exploratory_plots_soil[[n]],
+    name = n, 
+    figure_type = "exploratory",
+    subfolder ="soil"
+  )
 }
 
 ```
@@ -498,7 +508,13 @@ analysis_carbon %>%
 soil15<-
 ggplot(analysis_carbon, aes(final_C_Mg_per_ha)) +
   geom_histogram()
-print(soil15)
+## Individually save the plot
+save_plot(
+  soil15,
+  "final_C_distribution",
+  figure_type = "exploratory",
+  subfolder = "soil"
+)
 ## mild skew, moderate outliers, non-perfect normality
  # Centered roughly around 0
  # Most observations between -3 and +2
@@ -918,7 +934,12 @@ exploratory_plots_roots <- list(
 )
 
 for(n in names(exploratory_plots_roots)) {
-  save_plot(exploratory_plots_roots[[n]], n, subfolder = "roots")
+  save_plot(
+    plot_obj = exploratory_plots_roots[[n]],
+    name = n, 
+    figure_type = "exploratory",
+    subfolder ="roots"
+  )
 }
 ```
 
@@ -934,7 +955,13 @@ roots19 <-
 ggplot(analysis_carbon, aes(Roots_g_per_m2)) +
   geom_histogram(bins = 20) +
   theme_classic()
-print(roots19)
+## Individually save the plot
+save_plot(
+  roots19,
+  "roots_distribution",
+  figure_type = "exploratory",
+  subfolder = "roots"
+)
 ## Strong right skewed -- more root biomass is less (~500 g) overall
  # Some outliers > 2000 g
  # Need to log-transform before modeling!!
@@ -1303,7 +1330,12 @@ exploratory_plots_rdm <- list(
 )
 
 for(n in names(exploratory_plots_rdm)) {
-  save_plot(exploratory_plots_rdm[[n]], n, subfolder = "rdm")
+  save_plot(
+    plot_obj = exploratory_plots_rdm[[n]],
+    name = n, 
+    figure_type = "exploratory",
+    subfolder ="rdm"
+  )
 }
 ```
 

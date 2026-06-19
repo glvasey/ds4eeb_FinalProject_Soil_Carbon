@@ -1,0 +1,1544 @@
+---
+title: "Explanatory Analysis"
+subtitle: Winter Quarter 2026, Georgia Vasey
+format: pdf
+gfm: default
+pdf: default
+execute:
+  warning: false
+---
+
+## ⍟ Explanatory Analysis
+
+Now that I completed the exploratory phase (DAG → exploratory plots → correlation checks → distributions → response check), it is time to start finalizing the models. I first wanted to complete models for the change in soil C response variable.
+
+## Change in soil C
+
+```{r}
+
+# Read in the data
+analysis_carbon <- readRDS(here::here("data", "processed", "analysis_carbon.rds"))
+
+# Load the libraries
+library(tidyverse) # For data wrangling
+library(brms) # For stats
+library(bayesplot)
+library(ggeffects) # for plotting model predictions
+
+## Standardizing the predictors
+ # Improves model convergence, coefficient interpretation, comparison of effect sizes
+analysis_carbon <- analysis_carbon %>%
+  mutate(
+    precip_z = as.numeric(scale(`5y_precipitation`)),
+    moisture_z = as.numeric(scale(days_since_precip)),
+    slope_z = as.numeric(scale(slope)),
+    clay_z = as.numeric(scale(clay)),
+    RDM_z = as.numeric(scale(RDM_g_preburn))
+  )
+## Coefficients represent effect per 1 SD change
+ # Predictors are on comparable scales
+ # Mixed models converge more easily
+
+# Create dataset - Use the standardized predictors, but filtered for burn transects
+burn_soilC <- analysis_carbon %>%
+  filter(Treatment == "Burn") %>%
+  select(
+    Site,
+    final_C_Mg_per_ha,
+    CBI,
+    precip_z,
+    moisture_z,
+    slope_z,
+    clay_z
+  ) %>%
+  na.omit()
+
+# Set the priors
+priors_soilC <- c(
+  prior(normal(0, 3), class = "Intercept"),
+  prior(normal(0, 1), class = "b"),
+  prior(exponential(1), class = "sigma"),
+  prior(exponential(1), class = "sd")
+)
+## A normal(0, 1) prior on slopes says that there is an expectation that most effects are modest
+
+# Model 0 - Reference Model
+m0_soilC <- brm(data = burn_soilC, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_C_Mg_per_ha ~ CBI + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_soilC,
+                # Defaults from class
+                iter = 2000, warmup = 1000, chains = 4, cores = 4,
+                # Saving the model output
+                file = here::here("output", "models", "m.0_soilC")
+)
+
+# Check if the model is normal
+summary(m0_soilC) #Rhat = 1
+plot(m0_soilC) # Posterior distributions are normal, flat slope of chains, and chains are not crossing
+#print(m.0_soilC, digits = 3) - use when it is close to 0
+```
+
+Now I will run the code for each of the other model selections. This is for Model 1 (strict DAG adjustment). From the results, slope is the only predictor that has an estimate that does not include 0. A 1 standard deviation increase in slope is associated with an estimated increase of 1.14 Mg C ha⁻¹ change in soil carbon.
+
+```{r}
+# Model 1 - Strict DAG Model
+m1_soilC <- brm(data = burn_soilC, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_C_Mg_per_ha ~ CBI + precip_z + moisture_z + 
+                  slope_z + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_soilC,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+                file = here::here("output", "models", "m.1_soilC")
+)
+
+# Check if the model is normal
+summary(m1_soilC) #Rhat = 1
+
+# Predictor with CI that does not cross 0:
+ # slope (1.15) with CI from 0.06 to 2.21
+plot(m1_soilC)
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+
+# What is 1.15 Mg C ha⁻¹ relative to average starting stock?
+# Mean of the preburn soil C
+mean_preburn_C <- mean(analysis_carbon$`C_Mg_per_ha_Pre-burn`, na.rm = TRUE) #30.2 Mg C ha⁻¹
+# Percent effect, using the 1.15 estimate from model 1 output
+percent_effect <- (1.15 / mean_preburn_C) * 100 #3.8%
+
+```
+
+This is for Model 2 (replacing slope with clay). Now, the only predictor that has 95% CI without 0 is moisture_z (i.e., days since rainfall on burn date). A 1 SD increase in days since precipitation on burn date is 1.36 g greater change in soil carbon, with a 95% CI from 0.13 to 2.51.
+
+```{r}
+# Model 2 - Replacing slope with clay
+m2_soilC <- brm(data = burn_soilC, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_C_Mg_per_ha ~ CBI + precip_z + moisture_z + 
+                  clay_z + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_soilC,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+                file = here::here("output", "models", "m.2_soilC")
+)
+
+# Check if the model is normal
+summary(m2_soilC) #Rhat = 1
+# Predictor with CI that does not cross 0:
+ # days_since_precip, called moisture_z, (1.34) with CI from 0.09 to 2.51
+plot(m2_soilC)
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+```
+
+This is for model 3, which is testing whether precipitation affects burn severity. There appears to be no interaction between CBI and long-term precipitation, although days since rainfall is still a significant predictor. A 1 SD increase in days since precipitation on burn date is 1.36 g greater change in soil carbon, with a 95% CI from 0.12 to 2.48.
+
+```{r}
+# Model 3 - Testing the precipitation interaction
+ # Does the effect of burn severity depend on precipitation?
+m3_soilC <- brm(data = burn_soilC, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_C_Mg_per_ha ~ CBI + precip_z + moisture_z + 
+                  clay_z + CBI:precip_z + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_soilC,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+                file = here::here("output", "models", "m.3_soilC")
+)
+
+# Check if the model is normal
+summary(m3_soilC) #Rhat = 1
+ # Fire severity effects do NOT appear to depend on climate gradient.
+plot(m3_soilC)
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+```
+
+This is for model 4 (Site as a fixed effect), with only days since precipitation being an important predictor. A 1 SD increase in days since precipitation on burn date is 1.36 g greater change in soil carbon, with a 95% CI from 0.17 to 2.51.
+
+```{r}
+# Need to create a new prior for the fixed-effects model that removes the sd prior
+priors_soilC_fixed <- c(
+  prior(normal(0, 2), class = "Intercept"),
+  prior(normal(0, 1), class = "b"),
+  prior(exponential(1), class = "sigma")
+)
+
+# Model 4 - Site as a fixed effect
+m4_soilC <- brm(data = burn_soilC, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_C_Mg_per_ha ~ CBI + precip_z + moisture_z + 
+                  clay_z + Site,
+                # Specifying the standard priors
+                prior = priors_soilC_fixed,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+               file = here::here("output", "models", "m.4_soilC")
+)
+
+# Check if the model is normal
+summary(m4_soilC) #Rhat = 1
+ # Fire severity effects do NOT appear to depend on climate gradient.
+plot(m4_soilC)
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+```
+
+I also ran Model 5 as a diagnostic/sensitivity model since slope and clay are correlated (r = 0.67). Compared to Model 1, the site random effect nearly doubles when adding clay to the model (i.e., more residual site heterogeneity remains). This suggests that slope absorbs site-level differences better than clay.
+
+```{r}
+# Model 5- Diagnostic/sensitivity model to test between slope and clay (r =0.67)
+m5_soilC <- brm(data = burn_soilC, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Diagnostic model - what happens to clay and slope?
+                final_C_Mg_per_ha ~ CBI + precip_z + moisture_z + 
+                  clay_z + (1|Site),
+                # Specifying the standard priors
+                prior = priors_soilC_fixed,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+               file = here::here("output", "models", "m.5_soilC")
+)
+
+# Check if the model is normal
+summary(m5_soilC) #Rhat = 1
+ # Fire severity effects do NOT appear to depend on climate gradient.
+plot(m5_soilC)
+```
+
+Now, I want to compare the model fit using PSIS and WAIC. What I found is that Model 1 was the best fit model, with slope explaining variation slightly better than clay (PSIS for Model 1 = 247.7 vs. Model 0 = 253.4, Model 2 = 249.9, Model 3 = 250.2, and Model 4 = 249.8). Since slope and days since precipitation are correlated (0.57), this is likely why days since precipitation (i.e., moisture_z) was not a predictive estimate in Model 1.
+
+```{r}
+
+#PSIS
+ # ΔwaicIC ≈ 2–3 which is very small
+loo(m0_soilC) # 253.4	
+loo(m1_soilC) # 247.7
+ # According to waicIC, slope explains variation slightly better than clay.
+ # This follows the DAG, has best predictive performance, mechanistically interpretable 
+loo(m2_soilC) # 249.9
+loo(m3_soilC) # 250.2	
+loo(m4_soilC) # 249.8
+ ## slope and moisture are correlated (0.57)
+ ## soil carbon responses depend on something related to dryness / landscape position
+  # Potentially slope-driven drainage, burn dryness, fuel conditions
+ ## Soil carbon responses to fire were highly variable and not strongly explained by fire severity or long-term climate.
+
+#WAIC
+waic(m0_soilC) # 252.9	
+waic(m1_soilC) # 247.1 -- still the best model
+waic(m2_soilC) # 249.4	
+waic(m3_soilC) # 249.7		
+waic(m4_soilC) # 249.3
+
+# Key Takeaway
+# Fire severity does not strongly control soil carbon responses in coastal prairie burns.
+```
+
+Lastly, I want to be able to explain what "1 standard deviation" of change is for different predictors, since the predictors were scaled. Predictors were standardized so that model coefficients represent the effect of a one standard deviation change in each variable. For slope in soil carbon data (Model 1), one standard deviation corresponds to roughly 3.7 slope units, meaning steeper slopes were associated with approximately 1.14 Mg C ha⁻¹ greater soil carbon change after fire.
+
+```{r}
+## Back-transform from 1 standard deviation
+ # From model 1, the estimate for slope_z was 1.14
+ # A 1 standard deviation increase in slope is associated with an estimated +1.14 Mg C ha⁻¹ change in soil carbon.
+
+# Calculate SD and mean of original data
+mean(analysis_carbon$slope, na.rm = TRUE) #4.471264
+sd(analysis_carbon$slope, na.rm = TRUE) # 3.694242 (slope units)
+
+#z = (x- mean)/SD
+ # If I knew the slope of the transect (x), I would subtract the mean and divide by the slope
+
+# Predictors were standardized so that model coefficients represent the effect of a one standard deviation change in each variable. For slope, one standard deviation corresponds to roughly 3.7 slope units, meaning steeper slopes were associated with approximately 1.14 Mg C ha⁻¹ greater soil carbon change after fire.
+
+## Visualization:
+
+#Low slope      Mean slope      High slope
+#   |--------------|--------------|
+# 0.8             4.5             8.2
+#(-1 SD)          (0)          (+1 SD)
+
+```
+
+Time to visualize the model results. The coefficient plot shows that soil carbon responses to prescribed fire were highly variable, and were more strongly associated with landscape position and soil moisture than with burn severity. The second couple of conditional effects plots shows that the model shows with steeper slopes and more moisture at the time of the burn, there is larger soil C change, but this is mainly driven by the site TKR (slope and moisture) and CSR (moisture). The next plot is a caterpillar plot that is formatted similar to the coefficient plot, with the raw data by site for final change in soil carbon, including the mean and 1 SE. Finally, there are scatter plots for the raw data with slope and soil moisture by site.
+
+```{r}
+# Load library
+library(bayesplot)
+
+coef_df_soil <- posterior_summary(
+  m1_soilC,
+  variable = c("b_CBI", "b_precip_z", "b_moisture_z", "b_slope_z")
+) |>
+  as.data.frame() |>
+  rownames_to_column("term") |>
+  rename(
+    estimate = Estimate,
+    lower = Q2.5,
+    upper = Q97.5
+  ) |>
+  mutate(
+    term = recode(
+      term,
+      "b_CBI" = "Burn severity (CBI)",
+      "b_precip_z" = "5-year precipitation",
+      "b_moisture_z" = "Days since rain",
+      "b_slope_z" = "Slope"
+    )
+  )
+
+coef_plot_soil <-
+  ggplot(coef_df_soil, aes(x = estimate, y = term)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_errorbarh(
+    aes(xmin = lower, xmax = upper),
+    height = 0.2,
+    linewidth = 0.8
+  ) +
+  geom_point(size = 2.8) +
+  theme_classic() +
+  labs(
+    x = expression("Posterior estimate (" * Delta * " Soil C, Mg ha"^{-1} * " per 1 SD)"),
+    y = NULL
+  )
+
+print(coef_plot_soil)
+
+save_plot(
+  plot_obj = coef_plot_soil,
+  name = "posterior_coefficients_caterpillar",
+  figure_type = "final",
+  subfolder = "soil"
+)
+
+##
+
+# Coefficient (Posterior) Plot
+coef_plot_soil <-mcmc_areas(
+  as.matrix(m1_soilC),
+  pars = c("b_CBI","b_precip_z","b_moisture_z","b_slope_z"),
+  prob = 0.95
+)
+# Save the plot
+save_plot(
+  plot_obj = coef_plot_soil,
+  name = "posterior_coefficients",
+  figure_type = "final",
+  subfolder = "soil"
+)
+# CBI = around 0 (Fire severity → weak effect)
+# Long-term precipitation = around 0 (Climate → weak effect)
+# Moisture = slightly positive
+# Slope = positive effect (Landscape position (slope) → strongest signal)
+
+##
+
+# Marginal effects plot (predicted relationship)
+ce_slope_soil <- conditional_effects(m1_soilC, effects = "slope_z")
+ce_slope_plot <- plot(ce_slope_soil, points = TRUE)
+
+# brms is not a ggplot object, so will need to modify this
+# Take the marignal effects and plot the points
+ce_slope_plot_list <- plot(
+  ce_slope_soil,
+  points = TRUE,
+  plot = FALSE
+)
+
+ce_slope_plot <- ce_slope_plot_list[[1]]
+
+# Edited conditional plot for slope-z with labels
+ce_slope_plot_clean <-
+  ce_slope_plot + # plain marginal effects plot for slope
+  theme_classic() +
+  labs(
+    x = "Slope (standardized)",
+    y = expression(Delta*" Soil C (Mg ha"^{-1}*")")
+  ) +
+  theme(
+    panel.grid = element_blank(),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Save the plot
+save_plot(
+  plot_obj = ce_slope_plot_clean,
+  name = "conditional_effects_slope_z",
+  figure_type = "final",
+  subfolder = "soil"
+)
+## Steeper slopes → larger soil C change
+
+# Same thing, but by Site (color)
+library(tidybayes)
+
+# Create site colors
+ # Color-blind friendly from Paul Tol's website: https://sronpersonalpages.nl/~pault/
+site_colors <- c(
+  "CSR"  = "#44AA99",  # teal
+  "TKR"  = "#EE7766",  # orange EE8866
+  "CF"   = "#33BBEE",  # cyan
+  "WR5" = "#AA4499",  # purple
+  "MF"   = "#117733",  # green
+  "WR22"= "#882255",  # wine
+  "WR13"= "#CC6677",  # rose
+  "PL"   = "#999933",  # olive
+  "AM"   = "#332288"   # indigo
+)
+#Now, I can add: scale_color_manual(values = site_colors) or scale_fill_manual(values = site_colors)
+
+# Get the predictions from model 1
+pred_slope <- conditional_effects(
+  m1_soilC,
+  effects = "slope_z"
+)$slope_z
+
+# Slope z plot with sites colored
+ce_slope_plot_color <- ggplot() +
+
+  geom_point(
+    data = burn_soilC,
+    aes(
+      x = slope_z,
+      y = final_C_Mg_per_ha,
+      color = Site
+    ),
+    size = 3,
+    alpha = 0.8
+  ) +
+
+  geom_line(
+    data = pred_slope,
+    aes(
+      x = slope_z,
+      y = estimate__
+    ),
+    linewidth = 1.2
+  ) +
+
+  geom_ribbon(
+    data = pred_slope,
+    aes(
+      x = slope_z,
+      ymin = lower__,
+      ymax = upper__
+    ),
+    alpha = 0.2
+  ) +
+
+  scale_color_manual(values = site_colors) + # custom colors for sites
+
+  theme_classic() +
+
+  labs(
+    x = "Slope (z-score)",
+    y = expression(Delta*" Soil C (Mg ha"^{-1}*")")
+  )
+# Save the plot
+save_plot(
+  plot_obj = ce_slope_plot_color,
+  name = "conditional_effects_slope_z_color",
+  figure_type = "final",
+  subfolder = "soil"
+)
+
+# Do the same for days since rainfall
+# Get the predictions from model 1
+pred_moisture <- conditional_effects(
+  m1_soilC,
+  effects = "moisture_z"
+)$moisture_z
+
+# Slope z plot with sites colored
+ce_moisture_plot_color <- ggplot() +
+
+  geom_point(
+    data = burn_soilC,
+    aes(
+      x = moisture_z,
+      y = final_C_Mg_per_ha,
+      color = Site
+    ),
+    size = 3,
+    alpha = 0.8
+  ) +
+
+  geom_line(
+    data = pred_moisture,
+    aes(
+      x = moisture_z,
+      y = estimate__
+    ),
+    linewidth = 1.2
+  ) +
+
+  geom_ribbon(
+    data = pred_moisture,
+    aes(
+      x = moisture_z,
+      ymin = lower__,
+      ymax = upper__
+    ),
+    alpha = 0.2
+  ) +
+
+  scale_color_manual(values = site_colors) +
+
+  theme_classic() +
+
+  labs(
+    x = "Days since rain (z-score)",
+    y = expression(Delta*" Soil C (Mg ha"^{-1}*")")
+  )
+# Save the plot
+save_plot(
+  plot_obj = ce_moisture_plot_color,
+  name = "conditional_effects_moisture_z_color",
+  figure_type = "final",
+  subfolder = "soil"
+)
+
+# Patching them together in one panel
+
+library(magick)
+library(here)
+
+coef_img <- image_read(
+  here::here(
+    "figures", "final", "soil",
+    "posterior_coefficients_caterpillar.png"
+  )
+)
+
+slope_img <- image_read(
+  here::here(
+    "figures", "final", "soil",
+    "conditional_effects_slope_z_color.png"
+  )
+)
+
+moisture_img <- image_read(
+  here::here(
+    "figures", "final", "soil",
+    "conditional_effects_moisture_z_color.png"
+  )
+)
+
+bottom_row <- image_append(
+  c(slope_img, moisture_img)
+)
+
+soil_model_multipanel <- image_append(
+  c(coef_img, bottom_row),
+  stack = TRUE
+)
+
+image_write(
+  soil_model_multipanel,
+  here::here(
+    "figures", "final", "soil",
+    "soil_model_multipanel.png"
+  )
+)
+
+## Final figure for change in soil carbon!!
+# Creating a multi-panel
+
+#Resize coef_plot_soil text
+coef_plot_soil <- coef_plot_soil +
+  theme_classic(base_size = 16) +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text = element_text(size = 13)
+  )
+
+library(patchwork)
+library(grid)
+
+# Add manual panel tag to A
+coef_plot_soil_A <- coef_plot_soil +
+  labs(tag = "A")
+
+# Panel B: slope, no legend, no y-axis title
+ce_slope_plot_B <- ce_slope_plot_color +
+  labs(
+    tag = "B",
+    y = NULL
+  ) +
+  theme(
+    legend.position = "none"
+  )
+
+# Panel C: moisture, keep legend, remove redundant y-axis
+ce_moisture_plot_C <- ce_moisture_plot_color +
+  labs(
+    tag = "C",
+    y = NULL
+  ) +
+  theme(
+    legend.position = "right",
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+# Bottom row
+bottom_row <-
+  ce_slope_plot_B +
+  ce_moisture_plot_C +
+  plot_layout(widths = c(1, 1.25))
+
+# Add shared y-axis label
+bottom_row_labeled <-
+  wrap_elements(
+    grid::textGrob(
+      expression(Delta*" Soil C (Mg ha"^{-1}*")"),
+      rot = 90,
+      gp = grid::gpar(fontsize = 16)
+    )
+  ) +
+  bottom_row +
+  plot_layout(widths = c(0.025, 1))
+
+# Full multipanel WITHOUT automatic plot_annotation tags
+soil_model_multipanel <-
+  coef_plot_soil_A /
+  bottom_row_labeled +
+  plot_layout(heights = c(1, 1))
+
+soil_model_multipanel
+
+# Save plot
+save_plot(
+  plot_obj = soil_model_multipanel,
+  name = "soil_model_multipanel9",
+  figure_type = "final",
+  subfolder = "soil",
+  w = 12,
+  h = 8.5
+)
+
+# Slightly smaller
+save_plot(
+  plot_obj = soil_model_multipanel,
+  name = "soil_model_multipanel",
+  figure_type = "final",
+  subfolder = "soil",
+  w = 11,
+  h = 9
+)
+
+############
+##
+
+# Raw data point and interval plot (caterpillar) to match coefficient plot aesthetics
+# Bring in libraries
+library(dplyr)
+library(ggplot2)
+
+# Create a summary table to include mean + SE for final change in soil carbon (post-pre)
+site_summary <- analysis_carbon %>%
+  group_by(Site) %>%
+  summarize(
+    mean_C = mean(final_C_Mg_per_ha, na.rm=TRUE),
+    se = sd(final_C_Mg_per_ha, na.rm=TRUE) / sqrt(n()),
+    lower = mean_C - 1.96*se,
+    upper = mean_C + 1.96*se
+  )
+
+# Create ordered site levels
+ # This will make the plot be high to low or low to high with that variable
+site_order <- site_summary %>%
+  arrange(desc(mean_C)) %>% #Use arrange(mean_C) if I want from low to high
+  pull(Site)
+
+# Apply same order to both datasets
+site_summary <- site_summary %>%
+  mutate(Site_ordered = factor(Site, levels = site_order))
+
+# Using the site-ordered dataset for the plot
+analysis_carbon_ordered <- analysis_carbon %>%
+  mutate(Site_ordered = factor(Site, levels = site_order))
+
+# Plot
+final_C_site <- ggplot() +
+  # zero line
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed"
+  ) +
+  # raw data points -- can hash tag out if the grey raw points are too busy
+  geom_jitter(
+    data = analysis_carbon_ordered %>%
+    filter(Treatment == "Burn"),
+    aes(
+      x = final_C_Mg_per_ha,
+      y = Site_ordered
+    ),
+    height = 0.08,
+    alpha = 0.4,
+    size = 2
+  ) +
+  # confidence intervals (SE)
+  geom_errorbarh(
+    data = site_summary,
+    aes(
+      y = Site_ordered,
+      xmin = lower,
+      xmax = upper,
+      color = Site_ordered
+    ),
+    height = 0.15,
+    linewidth = 0.8
+  ) +
+  # means for change in soil C (Post-fire - Pre-fire)
+  geom_point(
+    data = site_summary,
+    aes(
+      x = mean_C,
+      y = Site_ordered,
+      color = Site_ordered
+    ),
+    size = 3
+  ) +
+  # Adding in the color scale (site_colors)
+  scale_color_manual(values = site_colors) +
+  # Get rid of grid lines
+  theme_classic() +
+  # Remove the legend
+  theme(
+    legend.position = "none"   # remove redundant legend
+  ) +
+  # Change the labels 
+  labs(
+    x = expression(Delta*" Soil C (Mg ha"^{-1}*")"),
+    y = "Site"
+  )
+# Save the plot
+#Save
+save_plot(
+  plot_obj = final_C_site,
+  name = "final_C_site_mean_SE",
+  figure_type = "final",
+  subfolder = "soil"
+)
+
+##
+
+# Raw data scatter plot for slope (colored by Site)
+slope_soil_raw <- ggplot(analysis_carbon, aes(slope, final_C_Mg_per_ha, color = Site)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  scale_color_manual(values = site_colors) +
+    labs(
+    x = "Slope (⁰)",
+    y = expression(Delta*" Soil C (Mg ha"^{-1}*")")
+  ) +
+  theme_classic()
+  #theme(     ## If I want the legend at the top
+    #legend.position = c(0.30, 0.98),
+    #legend.justification = c(0.5, 1),
+    #legend.direction = "horizontal",
+    #legend.background = element_blank()
+  #)
+#Save
+save_plot(
+  plot_obj = slope_soil_raw,
+  name = "slope_soil_raw_allSites",
+  figure_type = "final",
+  subfolder = "soil"
+)
+
+# Raw data scatter plot for days since precip (colored by Site)
+moisture_soil_raw <- ggplot(analysis_carbon, aes(days_since_precip, final_C_Mg_per_ha, color = Site)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  scale_color_manual(values = site_colors) +
+    labs(
+    x = "Days Since Rainfall Event",
+    y = expression(Delta*" Soil C (Mg ha"^{-1}*")")
+  ) +
+  theme_classic()
+  #theme(     ## If I want the legend at the top
+    #legend.position = c(0.30, 0.98),
+    #legend.justification = c(0.5, 1),
+    #legend.direction = "horizontal",
+    #legend.background = element_blank()
+  #)
+#Save
+save_plot(
+  plot_obj = moisture_soil_raw,
+  name = "moisture_soil_raw_allSites",
+  figure_type = "final",
+  subfolder = "soil"
+)
+
+# Raw data scatter plot for days since precip (colored by Site)
+clay_soil_raw <- ggplot(analysis_carbon, aes(clay, final_C_Mg_per_ha, color = Site)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  scale_color_manual(values = site_colors) +
+    labs(
+    x = "Clay (%)",
+    y = expression(Delta*" Soil C (Mg ha"^{-1}*")")
+  ) +
+  theme_classic()
+  #theme(     ## If I want the legend at the top
+    #legend.position = c(0.30, 0.98),
+    #legend.justification = c(0.5, 1),
+    #legend.direction = "horizontal",
+    #legend.background = element_blank()
+  #)
+#Save
+save_plot(
+  plot_obj = clay_soil_raw,
+  name = "clay_soil_raw_allSites",
+  figure_type = "final",
+  subfolder = "soil"
+)
+
+```
+
+Currently, the models suggest that slope is the most important factor, but according to the raw data points plot, this is likely heavily skewed by the site TKR. After re-running the model without TKR, slope reduced to 0.01 with 95% CI from -1.53 to 1.53. This suggests that the original slope effect was driven by TKR occupying both the highest slopes and the largest positive change in soil C values.
+
+```{r}
+## Sensitivity Model for best fitting model 
+## Assessing Model 1 without site TKR
+m1_soilC_noTKR <- brm(
+  data = burn_soilC %>% filter(Site != "TKR"),
+
+  family = gaussian,
+
+  final_C_Mg_per_ha ~
+    CBI +
+    precip_z +
+    moisture_z +
+    slope_z +
+    (1|Site),
+
+  prior = priors_soilC,
+
+  iter=4000,
+  warmup=2000,
+  chains=4,
+  cores=4,
+
+  control=list(adapt_delta=.99),
+
+  file=here::here(
+    "output",
+    "models",
+    "m1_soilC_noTKR"
+  ),
+
+  file_refit="always"
+)
+
+summary(m1_soilC_noTKR) #Rhat = 1
+# Predictor with CI that does not cross 0:
+ # slope (0.01) with CI from -1.53 to 1.53
+plot(m1_soilC_noTKR)
+
+# Comparing the estimates for slope in model 1 w/ and w/o TKR
+fixef(m1_soilC)["slope_z",]
+fixef(m1_soilC_noTKR)["slope_z",] # slope (0.01) with CI from -1.53 to 1.53
+ ## Essentially no slope
+
+```
+
+Now, I will run a senstivity test to do all of the models without TKR. From these four models, the apparent slope effect was driven primarily by TKR, the site occupying the upper end of the slope gradient. After removing TKR, slope effects were no longer distinguishable from zero. No environmental predictor consistently explained variaiton in post-burn soil carbon responses across sites, although moisture conditions (i.e., days since rainfall on burn day) exhibited weak positive associations that were robust across model structures. To test this, I ran Model 1 without the two dry sites (TKR and CSR), and the effect of days since rainfall also went away.
+
+```{r}
+# Filtering to not include site = TKR
+burn_soilC_noTKR <- burn_soilC %>%
+  filter(Site != "TKR")
+
+# Model 1 without TKR
+m.1_soilC_noTKR <- brm(data = burn_soilC_noTKR, # Reduced dataframe with burn-only transects w/o TKR
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_C_Mg_per_ha ~ CBI + precip_z + moisture_z + 
+                  slope_z + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_soilC,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+                file = here::here("output", "models", "m.1_soilC_noTKR")
+)
+
+# Check if the model is normal
+summary(m.1_soilC_noTKR) #Rhat = 1
+
+# Predictor with CI that does not cross 0:
+ # None!! - now slope is 0.02 with 95%CI from -1.51 to 1.55 
+ # slope_z - used to be 1.15 95% CI = 0.06 to 2.21
+ # The slope effect essentially vanished.
+ # Note, days_since_rainfall estimate = 0.85, 95% CI = -0.36 to 2.03
+
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+
+##
+
+# Model 2 - Replacing slope with clay
+m.2_soilC_noTKR <- brm(data = burn_soilC_noTKR, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_C_Mg_per_ha ~ CBI + precip_z + moisture_z + 
+                  clay_z + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_soilC,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+                file = here::here("output", "models", "m.2_soilC_noTKR")
+)
+
+# Check if the model is normal
+summary(m.2_soilC_noTKR) #Rhat = 1
+# Predictor with CI that does not cross 0:
+ # Nothing!
+ # Originally: clay_z - 0.51 - 95% CI = -0.76 to 1.64
+ # Now: clay_z -0.14, 95% CI = -1.41 to 1.16
+ # Also less of an effect/gone
+ # Note, days_since_rainfall estimate = 0.81, 95% CI = -0.41 to 1.98
+
+plot(m.2_soilC_noTKR)
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+
+##
+# Model 3 - Testing the precipitation interaction without TKR
+ # Does the effect of burn severity depend on precipitation?
+m.3_soilC_noTKR <- brm(data =  burn_soilC_noTKR, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_C_Mg_per_ha ~ CBI + precip_z + moisture_z + 
+                  clay_z + CBI:precip_z + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_soilC,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+                file = here::here("output", "models", "m.3_soilC_noTKR")
+)
+
+# Check if the model is normal
+summary(m.3_soilC_noTKR) #Rhat = 1
+ # Fire severity effects do NOT appear to depend on climate gradient.
+ # Note, days_since_rainfall estimate =  0.80, 95% CI = -0.44 to 1.97
+
+plot(m.3_soilC_noTKR)
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+
+##
+# Model 4 - Site as a fixed effect without TKR
+m.4_soilC_noTKR <- brm(data =  burn_soilC_noTKR, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_C_Mg_per_ha ~ CBI + precip_z + moisture_z + 
+                  clay_z + Site,
+                # Specifying the standard priors
+                prior = priors_soilC_fixed,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+               file = here::here("output", "models", "m.4_soilC_noTKR")
+)
+
+# Check if the model is normal
+summary(m.4_soilC_noTKR) #Rhat = 1
+ # Fire severity effects do NOT appear to depend on climate gradient.
+ # Note, days_since_rainfall estimate =   0.78, 95% CI = -0.46 to 2.01
+
+plot(m.4_soilC_noTKR)
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+
+##
+
+## Removing CSR and TKR (the moisture gradient)
+burn_soilC_noDry <- burn_soilC %>%
+  filter(!Site %in% c("TKR", "CSR"))
+
+# Model 1 without TKR and CSR
+m1_soilC_noDry <- brm(data = burn_soilC_noDry, # Reduced dataframe with burn-only transects w/o TKR and CSR
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_C_Mg_per_ha ~ CBI + precip_z + moisture_z + 
+                  slope_z + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_soilC,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+                file = here::here("output", "models", "m1_soilC_noDry")
+)
+summary(m1_soilC_noDry)
+# Estimate goes away for moisture_z
+```
+
+## Root biomass Post-burn
+
+I only came up with one model for root biomass after looking at the DAG and exploratory plots. It is clear that Treatment (Burn vs. Control) is the most important predictor since in the reference model without covariates (Model 0), Treatment still has high predictive power. The estimate for TreatmentControl is -0.41 with a 95% CI from -0.80 to -0.01.
+
+```{r}
+## Final model based on DAG and exploratory plots
+# Use the standardized predictors, but filtered for Year = 2024
+roots_new <- analysis_carbon %>%
+  filter(Year == "2024") %>%
+  select(
+    Site,
+    Roots_g_per_m2,
+    Treatment,
+    RDM_z,
+    precip_z,
+    clay_z,
+    slope_z
+  ) %>%
+  na.omit()
+
+# Set the factor levels to switch Burn and Control
+roots_new$Treatment <- factor(
+  roots_new$Treatment,
+  levels = c("Control", "Burn")
+)
+
+# Set the priors
+priors_roots <- c(
+  prior(normal(6, 2), class = "Intercept"),
+  prior(normal(0, 0.5), class = "b"),
+  prior(exponential(1), class = "sd"),
+  prior(exponential(1), class = "sigma")
+)
+
+# Model 0 - Reference Model
+m0_roots <- brm(data = roots_new, # Year == 2024 & scaled predictors
+                # Estimating the log root biomass
+                family = lognormal(), # log-normal distribution
+                # Model with only severity and site random intercept
+                Roots_g_per_m2 ~ Treatment + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_roots,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+                file = here::here("output", "models", "m.0_roots"))
+
+# Check if the model is normal
+summary(m0_roots) #Rhat = 1
+plot(m0_roots)
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+```
+
+Now, I want to compute the model with the environmental covariates. You can see that none of the environmental covariates have 95% CI that do not include zero (i.e., they are weak predictors). This compares with TreatmentControl which has an estimate of -0.47 and a 95% CI from -0.88 to -0.07. When you back-transform this value (e\^0.47), burned transects are predicted to have about 60% higher root biomass than control transects.
+
+```{r}
+m1_roots <- brm(data = roots_new, # Year == 2024 & scaled predictors
+                # Estimating the log root biomass
+                family = lognormal(), # log-normal distribution
+                # Model with only severity and site random intercept
+                Roots_g_per_m2 ~ Treatment + RDM_z + clay_z + slope_z + 
+                  precip_z + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_roots,
+                # Defaults from class
+                iter = 4000, warmup = 2000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.99),
+                # Saving the model output
+                file = here::here("output", "models", "m.1_roots"))
+
+# Check if the model is normal
+summary(m1_roots) #Rhat = 1
+plot (m1_roots)
+
+#TreatmentControl estimate is 0.47 with a 95% CI from -0.07 to -0.88 ; everything else crosses 0
+# Mean effect (converting from log root biomass)
+exp(0.47) #1.599994 ~ 1.6
+ # Control plots have 1.60 times less the root biomass of burn plots
+ # Burned plots have 1.60 times the root biomass of control plots
+
+# Rule for log models
+# Whenever there is a coefficient β from a log model:
+  # Percent change=(e^β−1)×100
+
+# Final increase (back-transformed):
+# Increase relative to control = (1.60-1) x 100 = 60%
+# Burned transects are predicted to have about 60% higher root biomass than control transects.
+
+# Sd(Intercept) for Site = 0.42 
+ # Indicates substantial among-site variability in root biomass, even after controlling for predictors
+# sigma = 0.74 - describes the variation among transects within sites
+
+# Other diagnostic tests:
+pp_check(m1_roots) # Simulated distributions are close to observed data (dark blue line)
+conditional_effects(m1_roots, effects = "Treatment")
+```
+
+I finish with evaluating which model has the best fit. Even though the environmental covariates were weak predictors, the PSIS for Model 1 was 837.7, which was lower looic value than the reference model of 842.5.
+
+```{r}
+# PSIS
+loo(m0_roots) #842.5
+loo(m1_roots) #837.7 --> better model with covariates
+```
+
+Lastly, I want to create visualizations from the root biomass model (m1_roots).
+
+```{r}
+# Does the model reproduce the overall distribution of rootbiomass?
+pp_check(m1_roots) 
+# Simulated distributions (lighter lines) are close to observed data (dark line)
+ # Posterior predictive checks indicated that the lognormal mixed model adequately reproduced the observed distribution of root biomass, including its right-skewed shape and treatment-level differences.
+
+
+# New library
+library(tidybayes)
+
+# Posterior distribution of the Burn effect
+ # Need to add negative to the exp(-b_TreatmentControl)
+control_draws_roots <- m1_roots %>%
+  spread_draws(b_TreatmentControl) %>%
+  mutate(effect_ratio = exp(-b_TreatmentControl))
+
+# Plot the posterior probability for burn vs. control in root biomass
+post_prob_roots <- ggplot(control_draws_roots, aes(effect_ratio)) +
+  geom_density(fill = "#d95f02", alpha = 0.6) +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  theme_classic(base_size = 14) +
+  labs(
+    x = "Burn / Contrrol Root Biomass Ratio",
+    y = "Posterior Density",
+    title = "Posterior Distribution of the Control Effect"
+  )
+print(post_prob_roots)
+#Save
+save_plot(
+  plot_obj = post_prob_roots,
+  name = "posterior_distribution_roots",
+  figure_type = "final",
+  subfolder = "roots"
+)
+## 1.0 line - no treatment effect
+ # density to the right of 1 = higher roots in Burn plots
+ # Posterior will mostly lie above 1, which visually shows the burn effect
+
+# Calculate posterior probability
+control_draws_roots %>%
+  summarise(prob_burn_higher = mean(effect_ratio > 1)) 
+# 0.99	
+# There is about a 99% posterior probability that burned transects have greater root biomass than controls.
+
+# Predicted root biomass by treatment (with raw data)
+# Create a prediction dataset
+ # Set predictors to 0 since they are standardized (mean values).
+newdat_roots <- data.frame(
+  Treatment = c("Control", "Burn"),
+  RDM_z = 0,
+  clay_z = 0,
+  slope_z = 0,
+  precip_z = 0,
+  Site = NA
+)
+
+# Get posterior predictions from that dataset
+pred_draws_roots <- add_epred_draws(
+  m1_roots,
+  newdata = newdat_roots,
+  re_formula = NA
+)
+
+# Summarize predictions
+pred_summary_roots <- pred_draws_roots %>%
+  group_by(Treatment) %>%
+  summarise(
+    mean = mean(.epred),
+    lower = quantile(.epred, 0.025),
+    upper = quantile(.epred, 0.975)
+  )
+
+# Set the factor level
+pred_summary_roots$Treatment <- factor(
+  pred_summary_roots$Treatment,
+  levels = c("Control", "Burn")
+)
+
+# Plot predictions and raw data
+roots_pred_raw <-
+ggplot() +
+  geom_jitter(
+    data = roots_new,
+    aes(Treatment, Roots_g_per_m2, color = Site),
+    width = 0.08,
+    alpha = 0.7
+  ) +
+  geom_point(
+    data = pred_summary_roots,
+    aes(Treatment, mean),
+    size = 5,
+    color = "black"
+  ) +
+  geom_errorbar(
+    data = pred_summary_roots,
+    aes(Treatment, ymin = lower, ymax = upper),
+    width = 0.08,
+    color = "black",
+    linewidth = 1
+  ) +
+    # Adding in the color scale (site_colors)
+  scale_color_manual(values = site_colors) +
+  # Keep plot without grid lines
+  theme_classic(base_size = 14) +
+  # Move the legend closer on the right
+  theme(
+  legend.position = "right",
+  legend.box.margin = margin(l = -35)
+)+
+  labs(
+    y = expression("Predicted Root Biomass (g m"^{-2}*")"),
+    x = "Treatment"
+  )
+plot(roots_pred_raw)
+#Save
+save_plot(
+  plot_obj = roots_pred_raw,
+  name = "pred_plot_mean_SE",
+  figure_type = "final",
+  subfolder = "roots"
+)
+save_plot(
+  roots_pred_raw,
+  name = "pred_plot_mean_SE_new",
+  figure_type = "final",
+  subfolder = "roots",
+  w = 5,
+  h = 4
+)
+# Interpretation:
+  # colored points = individual transects
+  # black points = posterior mean prediction
+  # error bars = 95% credible interval
+
+
+
+```
+
+## Change in aboveground biomass
+
+From my DAG and exploratory plots, I have two models that I want to run. I'm again using scaled predictors.
+
+```{r}
+
+# Use the standardized predictors, but filtered for burn transects
+RDM_delta <- analysis_carbon %>%
+  filter(Year == "2024") %>%
+  select(
+    Site,
+    final_RDM,
+    Treatment,
+    RDM_z,
+    precip_z,
+    clay_z
+  ) %>%
+  na.omit()
+
+# Set the priors
+priors_RDM <- c(
+  prior(normal(0, 20), class = Intercept),
+  prior(normal(0, 5), class = "b"),
+  prior(exponential(1), class = "sigma"),
+  prior(exponential(1), class = "sd")
+)
+## A normal(0, 1) prior on slopes says that there is an expectation that most effects are modest
+
+# Model 0 - Reference Model
+m0_RDM <- brm(data = RDM_delta, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_RDM ~ Treatment + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_RDM,
+                # Defaults from class
+                iter = 2000, warmup = 1000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.95),
+                # Saving the model output
+                file = here::here("output", "models", "m.0_RDM"))
+
+# Check if the model is normal
+summary(m0_RDM) #Rhat = 1
+plot(m0_RDM) 
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+```
+
+Now I will run the code for each of the other model selections.
+
+This is for Model 1, which found burned transects (Intercept) experienced 13.17 g reduction in aboveground biomass. Similarly, control transects are 8.17 higher in the change in aboveground biomass (e.g., burn transects have larger biomass losses, whereas control has smaller losses) with 95% CI is 3.49 to 12.78.
+
+Sites with higher pre-burn biomasss experienced greater reductions in biomass following fire, consistent with greater fuel loads resulting in greater biomass consumption. From the model, a 1 SD increase in pre-burn biomass leads to 7.37 g loss in biomass (95% CI is from -10.80 to -4.04). In addition, sites with higher clay content exhibited smaller declines in aboveground biomass, suggesting that soil texture influences vegetation recovery or productivity. From the model, 1 SD increase in % Clay leads to 4.03 g more change in abovegeground biomass (95% CI is from 1.16 to 6.72).
+
+The site random effect sd(Intercept) is small at 0.88, meaning there is relatively little unexplained variation among sites (predictors capture most of the site differences), but that sigma = 9.95, meaning approximately 10g variation among transects is unexplained by the model.
+
+The fuel load effect (-7.37) is nearly as large as the treatment effect (8.17), meaning fuel load ≈ fire efect. **Fire impact depends strongly on how much biomass was present before the burn.**
+
+```{r}
+m1_RDM <- brm(data = RDM_delta, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_RDM ~ Treatment + RDM_z + precip_z + clay_z + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_RDM,
+                # Defaults from class
+                iter = 2000, warmup = 1000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.95),
+                # Saving the model output
+                file = here::here("output", "models", "m.1_RDM"))
+
+# Check if the model is normal
+summary(m1_RDM) #Rhat = 1
+# The intercept (-13.17) with 95% CI from -17.45 to -8.90 (does not include 0)represents burned transects with average environmental conditions
+ # Burned transects experienced an average 13 g reduction in RDM.
+# Control transects have ~8 g higher ΔRDM than burned transects ; 95% CI = 3.49 to 12.78
+# A 1 SD increase in pre-burn biomass leads to ~7 g greater biomass loss.
+plot(m1_RDM)
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+```
+
+This is for Model 2, which looks at the interaction of Pre-burn RDM with Treatment (Burn vs. Control) or the fuel-load relationship. These results have similar estimates, but the interaction estimate has a 95% CI that crosses 0, suggesting that there is no strong evidence that the fuel-load relationship differs between the burn and control.
+
+```{r}
+m2_RDM <- brm(data = RDM_delta, # Reduced dataframe with burn-only transects
+                family = gaussian, # normal distribution
+                # Model with only severity and site random intercept
+                final_RDM ~ Treatment * RDM_z + precip_z + clay_z + (1 | Site),
+                # Specifying the standard priors
+                prior = priors_RDM,
+                # Defaults from class
+                iter = 2000, warmup = 1000, chains = 4, cores = 4,
+                # Change how cautious Stan explores posterior (default is 0.8)
+                control = list(adapt_delta = 0.95),
+                # Saving the model output
+                file = here::here("output", "models", "m.2_RDM")
+
+# Check if the model is normal
+summary(m2_RDM) #Rhat = 1
+plot(m2_RDM)
+# The posterior distributions are smooth with one clean peak, the four chains are overlapping, and the four chains are flat in slope.
+```
+
+Now it's time to look at the best model fit for change in aboveground biomass. It looks like Model 1 (without the interaction) is a better fit with PSIS = 434.7 compared to Model 2 with 435.3. That is nice since Model 1 is easier to interpret.
+
+```{r}
+# PSIS
+loo(m0_RDM) #453.6	
+loo(m1_RDM) #434.7	--> best model fit (without the interaction)
+loo(m2_RDM) #435.3	
+```
+
+Now, it's time to visualize the model outputs.
+
+```{r}
+
+# Load the libaries
+library(ggeffects)
+library(ggplot2)
+
+# ΔRDM by treatment #
+# Create the prediction
+# Prediction for pre-burn biomass
+pred_RDM <- ggpredict(m1_RDM, terms = "RDM_z [minmax]")
+
+# Plot the prediction
+rdm_pred<-
+ggplot()+
+  # Add the raw data
+  geom_jitter(
+    data = RDM_delta,
+    aes(x = Treatment, y = final_RDM),
+    width = 0.08,
+    alpha = 0.5
+  ) +
+  # Add the mean point of the model prediction
+  geom_point(
+    data = pred_treat_RDM, aes(x = x, y = predicted)) +
+  geom_point(size = 3) +
+  # Add the standard error bar for model prediction mean
+  geom_errorbar(
+    data = pred_treat_RDM,
+    aes(x = x, ymin = conf.low, ymax = conf.high), width = 0.1) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_classic(base_size = 13) +
+  labs(
+    x = "",
+    y = "Predicted Change in Aboveground Biomass)"
+  )
+plot(rdm_pred)
+save_plot(
+  plot_obj= rdm_pred,
+  name = "burn_control_rdm_change",
+  figure_type = "final",
+  subfolder = "rdm",
+  w = 5,
+  h = 4
+)
+# Shows estimated mean change in RDM for Burn and Control from the model
+# 95% credible intervals
+# Easy to see that the Burn is more negative than Control
+## The model predicted larger declines in aboveground biomass in burned transects than in control transects, indicating that fire reduced standing biomass.
+
+# ΔRDM vs pre-burn biomass #
+# Marginal effect of pre-burn biomass
+# First, the prediction
+pred_RDM <- ggpredict(m1_RDM, terms = "RDM_z [minmax]")
+
+# Filter for burn only transects
+RDM_delta_burn <- RDM_delta %>%
+  filter(Treatment == "Burn")
+
+# New plot
+# Plot with raw burn-only values, colored by site
+rdm_pred_raw <-
+  ggplot() +
+
+  geom_point(
+    data = RDM_delta_burn,
+    aes(
+      x = RDM_z,
+      y = final_RDM,
+      color = Site
+    ),
+    alpha = 0.9,
+    size = 3
+  ) +
+
+  geom_line(
+    data = pred_RDM,
+    aes(x = x, y = predicted),
+    linewidth = 1.5,
+    color = "black"
+  ) +
+
+  geom_ribbon(
+    data = pred_RDM,
+    aes(
+      x = x,
+      ymin = conf.low,
+      ymax = conf.high
+    ),
+    alpha = 0.25,
+    fill = "gray70"
+  ) +
+
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed"
+  ) +
+
+  scale_color_manual(values = site_colors) +
+
+  coord_cartesian(
+    xlim = range(RDM_delta_burn$RDM_z, na.rm = TRUE)
+  ) +
+
+  theme_classic(base_size = 13) +
+  #theme(
+  #legend.position = "none"
+#) +
+
+  labs(
+    x = "Pre-burn aboveground biomass (scaled)",
+    y = expression(Delta*" Aboveground biomass (g)")
+  )
+
+print(rdm_pred_raw)
+save_plot(
+  plot_obj = rdm_pred_raw,
+  name = "changeRDM_preburnRDM_2",
+  figure_type = "final",
+  subfolder = "rdm"
+)
+save_plot(
+  rdm_pred_raw,
+  name = "changeRDM_preburnRDM_2_no_legend",
+  figure_type = "final",
+  subfolder = "rdm",
+  w = 5,
+  h = 4
+)
+
+# Plot without raw values
+ggplot(pred_RDM, aes(x = x, y = predicted)) +
+  geom_line(linewidth = 1.2) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_classic(base_size = 14) +
+  labs(
+    x = "Pre-burn Biomass (Scaled)",
+    y = "Predicted Change in Aboveground Biomass"
+  )
+
+# Plot with raw values
+rdm_pred_raw <-
+ggplot() +
+  geom_point(
+    data = RDM_delta,
+    aes(x = RDM_z, y = final_RDM),
+    alpha = 0.6
+  ) +
+  geom_line(
+    data = pred_RDM, 
+    aes(x = x, y = predicted),
+  linewidth = 1.2) +
+  geom_ribbon(
+    data = pred_RDM,
+    aes(x = x, ymin = conf.low, ymax = conf.high), alpha = 0.2) +
+  # Create a line at 0, so that decrease is below the line
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_classic(base_size = 13) +
+  # Range of the dataset plotted
+  coord_cartesian(xlim = range(RDM_delta$RDM_z))+
+  labs(
+    x = "Pre-burn Biomass (Scaled)",
+    y = "Predicted Change in Aboveground Biomass"
+  )
+print(rdm_pred_raw)
+## As pre-burn biomass increases, the predicted change in aboveground biomass (RDM) becomes more negative
+ # Higher fuel loads leads to greater biomass loss
+ # Predicted biomass change declined with increasing pre-burn biomass, indication that transects with greater fuel loads experienced larger biomass reductions
+
+# Treat
+```
